@@ -7,7 +7,9 @@ authors = [
     { name = "Emmanuel Leblond", email = "emmanuel.leblond@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "click>=8.3.2",
+]
 
 [project.scripts]
 and = "agent_next_door:main"
