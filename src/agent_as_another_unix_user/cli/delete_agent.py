@@ -4,8 +4,13 @@ from pathlib import Path
 
 import click
 
-from ..config import get_agent, remove_agent
-from ..system import expected_group_name, expected_home, resolve_agent_home, require_root, agent_source_dir
+from ..config import load_config, remove_agent
+from ..system import (
+    expected_group_name,
+    expected_home,
+    resolve_agent_home,
+    entrypoint_src_dir,
+)
 from . import AppState, cli
 
 
@@ -15,10 +20,9 @@ from . import AppState, cli
 @click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
 def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
-    require_root(state.is_root)
-
     config_path = state.config_path
-    agent = get_agent(config_path, user_name)
+    config = load_config(config_path)
+    agent = config.get_agent(user_name)
     group_name = agent.su_as_agent_group if agent else expected_group_name(user_name)
     home = (
         expected_home(user_name, state.home_root)
@@ -26,7 +30,7 @@ def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> N
         else resolve_agent_home(state.runner, user_name)
     )
     entrypoint = Path(agent.entrypoint) if agent else home / "su_as_agent"
-    source_dir = agent_source_dir(home)
+    source_dir = entrypoint_src_dir(home)
 
     if not yes and not click.confirm(
         f"Delete agent {user_name!r} and remove all data from {home}?",

@@ -6,10 +6,9 @@ import os
 
 import click
 
+from ..version import __version__
 from ..config import default_config_path
 from ..runner import CommandRunner, SubprocessRunner
-
-VERSION = "0.1.0"
 
 
 @dataclass(slots=True)
@@ -38,7 +37,7 @@ def make_default_state(config_path: Path | None = None) -> AppState:
     default=None,
     help="Path to the configuration file.",
 )
-@click.version_option(VERSION)
+@click.version_option(__version__)
 @click.pass_context
 def cli(ctx: click.Context, config_path: Path | None) -> None:
     if ctx.obj is None:
@@ -57,4 +56,4 @@ def main() -> None:
     cli()
 
 
-__all__ = ["AppState", "cli", "main", "make_default_state", "VERSION"]
+__all__ = ("AppState", "cli", "main", "make_default_state")

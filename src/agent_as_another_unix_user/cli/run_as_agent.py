@@ -5,7 +5,7 @@ import os
 
 import click
 
-from ..config import get_agent
+from ..config import load_config
 from . import AppState, cli
 
 
@@ -14,10 +14,8 @@ from . import AppState, cli
 @click.argument("command", nargs=-1, required=True)
 @click.pass_obj
 def run_as_agent(state: AppState, user_name: str, command: tuple[str, ...]) -> None:
-    if state.is_root:
-        raise click.ClickException("au run must not be executed as root")
-
-    agent = get_agent(state.config_path, user_name)
+    config = load_config(state.config_path)
+    agent = config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 

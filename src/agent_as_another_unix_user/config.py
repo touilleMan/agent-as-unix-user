@@ -20,6 +20,11 @@ class AgentConfig:
 class Config:
     agents: list[AgentConfig]
 
+    def get_agent(self, user_name: str) -> AgentConfig | None:
+        return next(
+            (agent for agent in self.agents if agent.user_name == user_name), None
+        )
+
 
 def default_config_path() -> Path:
     return Path.home() / ".config" / DEFAULT_CONFIG_FILENAME
@@ -75,10 +80,3 @@ def remove_agent(path: Path, user_name: str) -> None:
     if path.exists() or filtered:
         config.agents = filtered
         save_config(path, config)
-
-
-def get_agent(path: Path, user_name: str) -> AgentConfig | None:
-    for agent in load_config(path).agents:
-        if agent.user_name == user_name:
-            return agent
-    return None

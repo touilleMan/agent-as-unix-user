@@ -2,35 +2,35 @@ from __future__ import annotations
 
 import click
 
-from ..config import get_agent, upsert_agent, AgentConfig
+from ..config import load_config, upsert_agent, AgentConfig
 from ..system import (
     acl_supported,
-    agent_main_c,
-    agent_makefile,
+    ENTRYPOINT_SRC_MAIN_C,
+    entrypoint_src_makefile,
     agent_readme_content,
-    agent_source_dir,
+    entrypoint_src_dir,
     current_user_name,
     expected_group_name,
     expected_home,
-    require_root,
 )
 from . import AppState, cli
 
 
 @cli.command("new")
 @click.option("--user", "user_name", default="agent", show_default=True)
+@click.option("--dry-run", is_flag=True, help="Print actions without executing them.")
 @click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
-def new_agent(state: AppState, user_name: str, yes: bool) -> None:
-    require_root(state.is_root)
-
+def new_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
     config_path = state.config_path
     group_name = expected_group_name(user_name)
     home = expected_home(user_name, state.home_root)
     entrypoint = home / "su_as_agent"
-    source_dir = agent_source_dir(home)
+    entrypoint_src = entrypoint_src_dir(home)
 
-    if get_agent(config_path, user_name) is not None:
+    config = load_config(config_path)
+
+    if config.get_agent(user_name) is not None:
         raise click.ClickException(
             f"agent {user_name!r} already exists in {config_path}"
         )
@@ -70,17 +70,19 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     for command in commands:
         state.runner.run(command)
 
-    source_dir.mkdir(parents=True, exist_ok=True)
-    source_dir.joinpath("main.c").write_text(agent_main_c(target_uid), encoding="utf-8")
-    source_dir.joinpath("Makefile").write_text(
-        agent_makefile(target_uid), encoding="utf-8"
+    entrypoint_src.mkdir(parents=True, exist_ok=True)
+    entrypoint_src.joinpath("main.c").write_text(
+        ENTRYPOINT_SRC_MAIN_C, encoding="utf-8"
     )
-    source_dir.joinpath("README.md").write_text(
+    entrypoint_src.joinpath("Makefile").write_text(
+        entrypoint_src_makefile(target_uid), encoding="utf-8"
+    )
+    entrypoint_src.joinpath("README.md").write_text(
         "Source directory for the su_as_agent entrypoint.\n", encoding="utf-8"
     )
 
-    state.runner.run(["make", "-C", str(source_dir)])
-    state.runner.run(["cp", str(source_dir / "su_as_agent"), str(entrypoint)])
+    state.runner.run(["make", "-C", str(entrypoint_src)])
+    state.runner.run(["cp", str(entrypoint_src / "su_as_agent"), str(entrypoint)])
     state.runner.run(["chown", f"{user_name}:{group_name}", str(entrypoint)])
     state.runner.run(["chmod", "4750", str(entrypoint)])
 
@@ -89,7 +91,6 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         su_as_agent_group=group_name,
         entrypoint=str(entrypoint),
     )
-
 
     home.mkdir(parents=True, exist_ok=True)
     home.joinpath("README.md").write_text(

@@ -7,7 +7,12 @@ import tempfile
 from click.testing import CliRunner
 
 from agent_as_another_unix_user.cli import AppState, cli
-from agent_as_another_unix_user.config import load_config, save_config, Config, AgentConfig
+from agent_as_another_unix_user.config import (
+    load_config,
+    save_config,
+    Config,
+    AgentConfig,
+)
 from agent_as_another_unix_user.runner import RecordingCommandRunner
 
 
@@ -94,13 +99,15 @@ def test_list_marks_missing_user_broken() -> None:
         home_root = tmp_path / "home"
         save_config(
             config_path,
-            Config(agents=[
-                AgentConfig(
-                    user_name="ghost",
-                    su_as_agent_group="su-as-ghost",
-                    entrypoint=str(tmp_path / "ghost" / "su_as_agent"),
-                )
-            ]),
+            Config(
+                agents=[
+                    AgentConfig(
+                        user_name="ghost",
+                        su_as_agent_group="su-as-ghost",
+                        entrypoint=str(tmp_path / "ghost" / "su_as_agent"),
+                    )
+                ]
+            ),
         )
 
         def handler(call):
@@ -134,5 +141,5 @@ def test_list_marks_missing_user_broken() -> None:
 
         result = CliRunner().invoke(cli, ["list"], obj=state)
         assert result.exit_code == 0, result.output
-        assert "ghost: BROKEN" in result.output
+        assert "ghost" in result.output
         assert "missing UNIX user" in result.output

@@ -5,7 +5,6 @@ from pathlib import Path
 import getpass
 import os
 
-import click
 
 from .config import AgentConfig
 from .runner import CommandRunner
@@ -15,8 +14,11 @@ from .runner import CommandRunner
 class HealthCheckResult:
     user_name: str
     home: str
-    status: str
-    reasons: list[str]
+    errors: list[str]
+
+    @property
+    def is_ok(self) -> bool:
+        return not self.errors
 
 
 def current_user_name() -> str:
@@ -94,59 +96,52 @@ def has_setgid(path: Path) -> bool:
 
 
 def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckResult:
-    reasons: list[str] = []
+    errors: list[str] = []
     home = resolve_agent_home(runner, agent.user_name)
 
     user_ok, user_info = user_exists(runner, agent.user_name)
     if not user_ok:
-        reasons.append("missing UNIX user")
+        errors.append("missing UNIX user")
 
     if not group_exists(runner, agent.su_as_agent_group):
-        reasons.append("missing UNIX group")
+        errors.append("missing UNIX group")
 
     if not home.exists():
-        reasons.append(f"missing home directory: {home}")
+        errors.append(f"missing home directory: {home}")
 
     if home.exists() and not has_setgid(home):
-        reasons.append("home directory missing setgid bit")
+        errors.append("home directory missing setgid bit")
 
     default_acl = read_default_acl(runner, home) if home.exists() else ""
     if not default_acl:
-        reasons.append("missing default ACL configuration or ACL unsupported")
+        errors.append("missing default ACL configuration or ACL unsupported")
     elif "default:" not in default_acl:
-        reasons.append("default ACL is not configured")
+        errors.append("default ACL is not configured")
 
     entrypoint = Path(agent.entrypoint)
     if not entrypoint.exists():
-        reasons.append(f"missing entrypoint: {entrypoint}")
+        errors.append(f"missing entrypoint: {entrypoint}")
     elif not os.access(entrypoint, os.X_OK):
-        reasons.append(f"entrypoint is not executable: {entrypoint}")
+        errors.append(f"entrypoint is not executable: {entrypoint}")
 
     groups = current_user_groups(runner)
     if agent.su_as_agent_group not in groups:
-        reasons.append(f"current user is not a member of {agent.su_as_agent_group}")
+        errors.append(f"current user is not a member of {agent.su_as_agent_group}")
 
     if not acl_supported(runner):
-        reasons.append("ACL is not supported on this system")
+        errors.append("ACL is not supported on this system")
 
     if user_ok and not user_info.get("home"):
-        reasons.append("user account has no home directory configured")
+        errors.append("user account has no home directory configured")
 
-    status = "ok" if not reasons else "broken"
     return HealthCheckResult(
         user_name=agent.user_name,
         home=str(home),
-        status=status,
-        reasons=reasons,
+        errors=errors,
     )
 
 
-def require_root(is_root: bool) -> None:
-    if not is_root:
-        raise click.ClickException("this command requires root privileges")
-
-
-def agent_source_dir(home: Path) -> Path:
+def entrypoint_src_dir(home: Path) -> Path:
     return home / ".config" / "agent-as-another-unix-user" / "su_as_agent-src"
 
 
@@ -162,16 +157,48 @@ Entrypoint:
 - `{home / "su_as_agent"}`
 
 Source code:
-- `{agent_source_dir(home)}`
+- `{entrypoint_src_dir(home)}`
 
 To delete this agent safely, use `au delete --user {agent.user_name}`.
 That command will remove the UNIX user, group, home directory and all data.
 """
 
 
-def agent_main_c(target_uid: str) -> str:
-    return f"""#include <errno.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\n\n#ifndef TARGET_UID\n#define TARGET_UID {target_uid}\n#endif\n\nint main(int argc, char **argv) {{\n    if (argc < 2) {{\n        fprintf(stderr, \"usage: %s <command> [args...]\\n\", argv[0]);\n        return 2;\n    }}\n    if (setuid(TARGET_UID) != 0) {{\n        perror(\"setuid\");\n        return 1;\n    }}\n    execvp(argv[1], &argv[1]);\n    perror(\"execvp\");\n    return 1;\n}}\n"""
+ENTRYPOINT_SRC_MAIN_C = """
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#ifndef TARGET_UID
+// `TARGET_UID` is defined by the Makefile
+#error TARGET_UID is not defined (compiling without the Makefile ?)
+#endif
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s <command> [args...]\n", argv[0]);
+        return 2;
+    }
+    if (setuid(TARGET_UID) != 0) {
+        perror("setuid");
+        return 1;
+    }
+    execvp(argv[1], &argv[1]);
+    perror("execvp");
+    return 1;
+}
+"""
 
 
-def agent_makefile(target_uid: str) -> str:
-    return f"""CC ?= cc\nCFLAGS ?= -O2 -Wall -Wextra\nTARGET_UID ?= {target_uid}\n\nall: su_as_agent\n\nsu_as_agent: main.c\n\t$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -o $@ $<\n"""
+def entrypoint_src_makefile(target_uid: str) -> str:
+    return f"""\
+CC ?= cc
+CFLAGS ?= -O2 -Wall -Wextra
+TARGET_UID ?= {target_uid}
+
+all: su_as_agent
+
+su_as_agent: main.c
+	$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -o $@ $<
+"""
