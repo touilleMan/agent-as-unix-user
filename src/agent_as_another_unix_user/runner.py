@@ -6,16 +6,6 @@ from typing import Callable, Protocol
 import subprocess
 
 
-@dataclass(frozen=True)
-class CommandCall:
-    args: tuple[str, ...]
-    cwd: Path | None = None
-    check: bool = True
-    capture_output: bool = False
-    text: bool = True
-    input: str | None = None
-
-
 class CommandRunner(Protocol):
     def run(
         self,
@@ -50,6 +40,16 @@ class SubprocessRunner:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RecordingCommandCall:
+    args: tuple[str, ...]
+    cwd: Path | None = None
+    check: bool = True
+    capture_output: bool = False
+    text: bool = True
+    input: str | None = None
+
+
 class RecordingCommandRunner:
     """A test-friendly runner that records all calls.
 
@@ -59,10 +59,10 @@ class RecordingCommandRunner:
 
     def __init__(
         self,
-        handler: Callable[[CommandCall], subprocess.CompletedProcess[str]]
+        handler: Callable[[RecordingCommandCall], subprocess.CompletedProcess[str]]
         | None = None,
     ) -> None:
-        self.calls: list[CommandCall] = []
+        self.calls: list[RecordingCommandCall] = []
         self.handler = handler
 
     def run(
@@ -75,7 +75,7 @@ class RecordingCommandRunner:
         text: bool = True,
         input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        call = CommandCall(
+        call = RecordingCommandCall(
             args=tuple(args),
             cwd=Path(cwd) if cwd is not None else None,
             check=check,

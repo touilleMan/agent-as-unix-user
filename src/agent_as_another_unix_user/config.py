@@ -1,22 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import json
 import tomllib
 
-from .models import AgentConfig
-
 DEFAULT_CONFIG_FILENAME = "agent-as-another-unix-user.toml"
 DEFAULT_GROUP_PREFIX = "su-as-"
+
+
+@dataclass(slots=True)
+class AgentConfig:
+    user_name: str
+    su_as_agent_group: str
+    entrypoint: str
+
+
+@dataclass(slots=True)
+class Config:
+    agents: list[AgentConfig]
 
 
 def default_config_path() -> Path:
     return Path.home() / ".config" / DEFAULT_CONFIG_FILENAME
 
 
-def load_config(path: Path) -> list[AgentConfig]:
+def load_config(path: Path) -> Config:
     if not path.exists():
-        return []
+        return Config(agents=[])
 
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     agents: list[AgentConfig] = []
@@ -28,13 +39,13 @@ def load_config(path: Path) -> list[AgentConfig]:
                 entrypoint=str(raw["entrypoint"]),
             )
         )
-    return agents
+    return Config(agents=agents)
 
 
-def save_config(path: Path, agents: list[AgentConfig]) -> None:
+def save_config(path: Path, config: Config) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
-    for agent in agents:
+    for agent in config.agents:
         lines.extend(
             [
                 "[[agents]]",
@@ -48,28 +59,26 @@ def save_config(path: Path, agents: list[AgentConfig]) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def upsert_agent(path: Path, agent: AgentConfig) -> list[AgentConfig]:
-    agents = load_config(path)
-    for idx, existing in enumerate(agents):
+def upsert_agent(path: Path, agent: AgentConfig) -> None:
+    config = load_config(path)
+    for idx, existing in enumerate(config.agents):
         if existing.user_name == agent.user_name:
-            agents[idx] = agent
-            save_config(path, agents)
-            return agents
-    agents.append(agent)
-    save_config(path, agents)
-    return agents
+            config.agents[idx] = agent
+            save_config(path, config)
+    config.agents.append(agent)
+    save_config(path, config)
 
 
-def remove_agent(path: Path, user_name: str) -> list[AgentConfig]:
-    agents = load_config(path)
-    filtered = [agent for agent in agents if agent.user_name != user_name]
+def remove_agent(path: Path, user_name: str) -> None:
+    config = load_config(path)
+    filtered = [agent for agent in config.agents if agent.user_name != user_name]
     if path.exists() or filtered:
-        save_config(path, filtered)
-    return filtered
+        config.agents = filtered
+        save_config(path, config)
 
 
 def get_agent(path: Path, user_name: str) -> AgentConfig | None:
-    for agent in load_config(path):
+    for agent in load_config(path).agents:
         if agent.user_name == user_name:
             return agent
     return None

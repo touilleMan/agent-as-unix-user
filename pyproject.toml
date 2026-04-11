@@ -1,7 +1,7 @@
 [project]
 name = "agent-as-another-unix-user"
 version = "0.1.0"
-description = "Add your description here"
+description = "A barebone sandbox for agentic coding based on UNIX user"
 readme = "README.md"
 authors = [
     { name = "Emmanuel Leblond", email = "emmanuel.leblond@gmail.com" }

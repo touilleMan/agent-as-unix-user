@@ -7,8 +7,7 @@ import tempfile
 from click.testing import CliRunner
 
 from agent_as_another_unix_user.cli import AppState, cli
-from agent_as_another_unix_user.config import load_config, save_config
-from agent_as_another_unix_user.models import AgentConfig
+from agent_as_another_unix_user.config import load_config, save_config, Config, AgentConfig
 from agent_as_another_unix_user.runner import RecordingCommandRunner
 
 
@@ -39,11 +38,11 @@ def test_new_agent_records_commands_and_writes_config() -> None:
         result = CliRunner().invoke(cli, ["new", "--user", "agent", "--yes"], obj=state)
         assert result.exit_code == 0, result.output
 
-        agents = load_config(config_path)
-        assert len(agents) == 1
-        assert agents[0].user_name == "agent"
-        assert agents[0].su_as_agent_group == "su-as-agent"
-        assert agents[0].entrypoint == str(home_root / "agent" / "su_as_agent")
+        config = load_config(config_path)
+        assert len(config.agents) == 1
+        assert config.agents[0].user_name == "agent"
+        assert config.agents[0].su_as_agent_group == "su-as-agent"
+        assert config.agents[0].entrypoint == str(home_root / "agent" / "su_as_agent")
 
         assert (home_root / "agent" / "README.md").exists()
         assert (
@@ -95,13 +94,13 @@ def test_list_marks_missing_user_broken() -> None:
         home_root = tmp_path / "home"
         save_config(
             config_path,
-            [
+            Config(agents=[
                 AgentConfig(
                     user_name="ghost",
                     su_as_agent_group="su-as-ghost",
                     entrypoint=str(tmp_path / "ghost" / "su_as_agent"),
                 )
-            ],
+            ]),
         )
 
         def handler(call):

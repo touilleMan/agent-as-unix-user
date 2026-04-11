@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import getpass
 import os
 
 import click
 
-from .models import AgentConfig, HealthCheckResult
+from .config import AgentConfig
 from .runner import CommandRunner
+
+
+@dataclass(slots=True)
+class HealthCheckResult:
+    user_name: str
+    home: str
+    status: str
+    reasons: list[str]
 
 
 def current_user_name() -> str:
