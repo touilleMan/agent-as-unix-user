@@ -1,6 +1,3 @@
-import click
+from .cli import main
 
-click.command()
-def main() -> None:
-    # TODO
-    pass
+__all__ = ["main"]
