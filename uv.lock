@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
-name = "agent-next-door"
+name = "agent-as-another-unix-user"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
