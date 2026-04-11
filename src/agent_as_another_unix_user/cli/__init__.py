@@ -7,25 +7,17 @@ import os
 import click
 
 from ..version import __version__
-from ..config import default_config_path
+from ..config import default_config_path, Config
 from ..runner import CommandRunner, SubprocessRunner
 
 
 @dataclass(slots=True)
 class AppState:
     config_path: Path
+    config: Config
     home_root: Path
     runner: CommandRunner
     is_root: bool
-
-
-def make_default_state(config_path: Path | None = None) -> AppState:
-    return AppState(
-        config_path=config_path or default_config_path(),
-        home_root=Path("/home"),
-        runner=SubprocessRunner(),
-        is_root=(os.geteuid() == 0),
-    )
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -34,16 +26,21 @@ def make_default_state(config_path: Path | None = None) -> AppState:
     "config_path",
     "-C",
     type=click.Path(path_type=Path),
-    default=None,
+    default=default_config_path(),
     help="Path to the configuration file.",
 )
 @click.version_option(__version__)
 @click.pass_context
-def cli(ctx: click.Context, config_path: Path | None) -> None:
-    if ctx.obj is None:
-        ctx.obj = make_default_state(config_path)
-    elif config_path is not None:
-        ctx.obj.config_path = config_path
+def cli(ctx: click.Context, config_path: Path) -> None:
+    ctx.obj = AppState(
+        config_path=config_path,
+        # Lock the configuration for the duration of the command
+        # to prevent concurrent operation (except for `au run`)
+        config=ctx.with_resource(Config.open(config_path)),
+        home_root=Path("/home"),
+        runner=SubprocessRunner(),
+        is_root=(os.geteuid() == 0),
+    )
 
 
 from . import delete_agent as _delete_agent  # noqa: E402,F401
@@ -56,4 +53,4 @@ def main() -> None:
     cli()
 
 
-__all__ = ("AppState", "cli", "main", "make_default_state")
+__all__ = ("AppState", "cli", "main")

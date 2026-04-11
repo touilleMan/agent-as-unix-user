@@ -7,13 +7,14 @@ import tempfile
 from click.testing import CliRunner
 
 from agent_as_another_unix_user.cli import AppState, cli
+import agent_as_another_unix_user.config as config_module
 from agent_as_another_unix_user.config import (
-    load_config,
-    save_config,
     Config,
     AgentConfig,
 )
 from agent_as_another_unix_user.runner import RecordingCommandRunner
+
+from .conftest import load_config
 
 
 def test_new_agent_records_commands_and_writes_config() -> None:
@@ -100,13 +101,14 @@ def test_list_marks_missing_user_broken() -> None:
         save_config(
             config_path,
             Config(
+                path=config_path,
                 agents=[
                     AgentConfig(
                         user_name="ghost",
                         su_as_agent_group="su-as-ghost",
                         entrypoint=str(tmp_path / "ghost" / "su_as_agent"),
                     )
-                ]
+                ],
             ),
         )
 
@@ -143,3 +145,37 @@ def test_list_marks_missing_user_broken() -> None:
         assert result.exit_code == 0, result.output
         assert "ghost" in result.output
         assert "missing UNIX user" in result.output
+
+
+def test_config_open_creates_file_and_shows_spinner_when_locked(
+    monkeypatch, capsys
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        config_path = tmp_path / "config.toml"
+
+        state = {"calls": 0}
+
+        def fake_flock(_fd, op):
+            if op & config_module.fcntl.LOCK_UN:
+                return None
+            state["calls"] += 1
+            if state["calls"] == 1 and op & config_module.fcntl.LOCK_NB:
+                raise BlockingIOError()
+            return None
+
+        monkeypatch.setattr(config_module.fcntl, "flock", fake_flock)
+        monkeypatch.setattr(config_module.time, "sleep", lambda _seconds: None)
+
+        with config_module.Config.open(config_path) as config:
+            config.upsert_agent(
+                config_module.AgentConfig(
+                    user_name="agent",
+                    su_as_agent_group="su-as-agent",
+                    entrypoint="/tmp/agent/su_as_agent",
+                )
+            )
+
+        captured = capsys.readouterr()
+        assert config_path.exists()
+        assert "Waiting for lock on" in captured.err

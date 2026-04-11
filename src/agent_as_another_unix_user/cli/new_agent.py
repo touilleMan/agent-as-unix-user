@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import click
 
-from ..config import load_config, upsert_agent, AgentConfig
+from ..config import AgentConfig, Config
 from ..system import (
     acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
@@ -28,9 +28,7 @@ def new_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None
     entrypoint = home / "su_as_agent"
     entrypoint_src = entrypoint_src_dir(home)
 
-    config = load_config(config_path)
-
-    if config.get_agent(user_name) is not None:
+    if state.config.get_agent(user_name) is not None:
         raise click.ClickException(
             f"agent {user_name!r} already exists in {config_path}"
         )
@@ -102,8 +100,6 @@ def new_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None
         encoding="utf-8",
     )
 
-    upsert_agent(
-        config_path,
-        agent_config,
-    )
+    with Config.open(config_path) as config:
+        config.upsert_agent(agent_config)
     click.echo(f"Created agent {user_name!r}")

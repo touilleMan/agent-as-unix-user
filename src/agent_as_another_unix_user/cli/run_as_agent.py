@@ -5,7 +5,6 @@ import os
 
 import click
 
-from ..config import load_config
 from . import AppState, cli
 
 
@@ -13,9 +12,14 @@ from . import AppState, cli
 @click.option("--user", "user_name", default="agent", show_default=True)
 @click.argument("command", nargs=-1, required=True)
 @click.pass_obj
-def run_as_agent(state: AppState, user_name: str, command: tuple[str, ...]) -> None:
-    config = load_config(state.config_path)
-    agent = config.get_agent(user_name)
+@click.pass_context
+def run_as_agent(
+    ctx: click.Context, state: AppState, user_name: str, command: tuple[str, ...]
+) -> None:
+    import time
+
+    time.sleep(100)
+    agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
@@ -24,6 +28,10 @@ def run_as_agent(state: AppState, user_name: str, command: tuple[str, ...]) -> N
         raise click.ClickException(f"entrypoint does not exist: {entrypoint}")
     if not os.access(entrypoint, os.X_OK):
         raise click.ClickException(f"entrypoint is not executable: {entrypoint}")
+
+    # Drop the advisory lock on the configuration file since the subcommand is going
+    # to take an arbitrary long time
+    ctx.close()
 
     result = state.runner.run(
         [str(entrypoint), *command], check=False, capture_output=False, text=True

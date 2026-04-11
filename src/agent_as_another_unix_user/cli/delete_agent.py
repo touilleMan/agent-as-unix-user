@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from ..config import load_config, remove_agent
+from ..config import Config
 from ..system import (
     expected_group_name,
     expected_home,
@@ -21,8 +21,7 @@ from . import AppState, cli
 @click.pass_obj
 def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
     config_path = state.config_path
-    config = load_config(config_path)
-    agent = config.get_agent(user_name)
+    agent = state.config.get_agent(user_name)
     group_name = agent.su_as_agent_group if agent else expected_group_name(user_name)
     home = (
         expected_home(user_name, state.home_root)
@@ -60,5 +59,6 @@ def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> N
                     err=True,
                 )
 
-    remove_agent(config_path, user_name)
+    with Config.open(config_path) as config:
+        config.remove_agent(user_name)
     click.echo(f"Deleted agent {user_name!r}")

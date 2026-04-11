@@ -3,7 +3,6 @@ from __future__ import annotations
 import click
 from click import echo, style
 
-from ..config import load_config
 from ..system import healthcheck_agent
 from . import AppState, cli
 
@@ -11,12 +10,11 @@ from . import AppState, cli
 @cli.command("list")
 @click.pass_obj
 def list_agents(state: AppState) -> None:
-    config = load_config(state.config_path)
-    if not config:
+    if not state.config.agents:
         echo("No agents configured.")
         return
 
-    for agent in config.agents:
+    for agent in state.config.agents:
         health = healthcheck_agent(state.runner, agent)
         if health.is_ok:
             echo(f"{style(agent.user_name, fg='green')}")
