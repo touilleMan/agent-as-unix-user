@@ -177,12 +177,13 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         ]
     )
     # Here is the secret sauce:
-    # - Set the agent user as the entrypoint binary's owner.
-    # - Set the SetUID bit on the entrypoint binary. The make it runs
-    #   with the file owner's privileges instead of the caller's.
-    state.runner.run(
-        ["sudo", "chown", f"{user_name}:{su_as_agent_group}", str(entrypoint)]
-    )
+    # - Set root as the entrypoint binary's owner.
+    # - Set the SetUID bit on the entrypoint binary. This gives it the
+    #   file owner's privileges (i.e. root) instead of the caller's.
+    # - The group is set to the su-as-agent group so only members can execute it.
+    # This allows the binary to use root privileges to drop the caller's
+    # groups and become permanently the agent user.
+    state.runner.run(["sudo", "chown", f"root:{su_as_agent_group}", str(entrypoint)])
     # Note the leading `4` in chmod, this is the setuid bit
     state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
 

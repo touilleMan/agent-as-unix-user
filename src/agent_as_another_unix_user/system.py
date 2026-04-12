@@ -189,6 +189,7 @@ That command will remove the UNIX user, group, home directory and all data.
 ENTRYPOINT_SRC_MAIN_C = """
 #define _GNU_SOURCE  // Needed for setresgid/setresuid
 #include <errno.h>
+#include <grp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -217,19 +218,41 @@ int main(int argc, char **argv) {
 
     uid_t original_uid = getuid();
 
-    // Permanently drop our original user privilege and become the agent
+    // The binary is setuid-root, so euid is 0.
+    // First, become fully root so we can manipulate groups and identities.
+    if (setuid(0) != 0) {
+        perror("setuid(0)");
+        return 1;
+    }
 
+    // Drop all supplementary groups inherited from the calling user
+    // This command requires to be root since removing a group can
+    // cause privilege escalation (typically if a group is used to
+    // retrain instead of give access).
+    if (setgroups(0, NULL) != 0) {
+        perror("setgroups");
+        return 1;
+    }
+
+    // Permanently set GID to the agent's group
     if (setresgid(TARGET_GID, TARGET_GID, TARGET_GID) != 0) {
         perror("setresgid");
         return 1;
     }
 
+    // Permanently set UID to the agent user (this also drops root)
     if (setresuid(TARGET_UID, TARGET_UID, TARGET_UID) != 0) {
         perror("setresuid");
         return 1;
     }
 
-    // Sanity check to ensure we cannot get back access to the original UID
+    // Sanity check: ensure we cannot regain root
+    if (setuid(0) != -1) {
+        fprintf(stderr, "ERROR: was able to regain root access — aborting!\\n");
+        return 1;
+    }
+
+    // Sanity check: ensure we cannot get back the original caller UID
     if (setuid(original_uid) != -1) {
         fprintf(stderr, "ERROR: was able to regain original user access — aborting!\\n");
         return 1;
