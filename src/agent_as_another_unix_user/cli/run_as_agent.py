@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-import os
 
 import click
+
 
 from . import AppState, cli
 
@@ -16,25 +15,39 @@ from . import AppState, cli
 def run_as_agent(
     ctx: click.Context, state: AppState, user_name: str, command: tuple[str, ...]
 ) -> None:
-    import time
-
-    time.sleep(100)
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
-    entrypoint = Path(agent.entrypoint)
-    if not entrypoint.exists():
-        raise click.ClickException(f"entrypoint does not exist: {entrypoint}")
-    if not os.access(entrypoint, os.X_OK):
-        raise click.ClickException(f"entrypoint is not executable: {entrypoint}")
-
     # Drop the advisory lock on the configuration file since the subcommand is going
-    # to take an arbitrary long time
-    ctx.close()
+    # to take an arbitrary long time.
+    #
+    # The config resource is attached to the root click context in `cli()`,
+    # so closing the current command context would not release it yet.
+    ctx.find_root().close()
+
+    # entrypoint = Path(agent.entrypoint)
+    # if not entrypoint.exists():
+    #     raise click.ClickException(f"entrypoint does not exist: {entrypoint}")
+    # if not os.access(entrypoint, os.X_OK):
+    #     raise click.ClickException(f"entrypoint is not executable: {entrypoint}")
 
     result = state.runner.run(
-        [str(entrypoint), *command], check=False, capture_output=False, text=True
+        [
+            # If the agent user has just been created, we should re-login
+            # to have our groups being updated (so that `agent.su_as_agent_group`
+            # appears).
+            # So we use sg here to instead force execute the command as group
+            # `agent.su_as_agent_group` which works without even with re-login.
+            "sg",
+            "-",
+            agent.su_as_agent_group,
+            "-c",
+            f"{agent.entrypoint} {' '.join(command)}",
+        ],
+        check=False,
+        capture_output=False,
+        text=True,
     )
     if result.returncode != 0:
         raise click.ClickException(

@@ -46,9 +46,9 @@ def cli(ctx: click.Context, config_path: Path) -> None:
         is_root=(os.geteuid() == 0),
     )
 
-    # TODO: Sanity check to ensure the home directory uses xx0 access rights.
+    # TODO: Sanity check to ensure the home directory uses xx1 access rights.
     #       This is important to ensure the agent user cannot read its content
-    #       and try to leak secrets.
+    #       and try to leak secrets, but is still able to resolve symlinks.
     #       If this is detected, a warning should be displayed.
     #       A parameter `sanity_check_home_rights` can be set to `False`
     #       (it defaults to `True`) to disable this sanity check.

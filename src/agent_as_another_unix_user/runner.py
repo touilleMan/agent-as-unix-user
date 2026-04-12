@@ -34,10 +34,13 @@ class SubprocessRunner:
         quiet: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         if not quiet:
+            display_args = [f"'{a}'" if " " in a else a for a in args]
             if cwd:
-                display_cmd = style(f"cd {cwd}", fg="grey") + " && " + " ".join(args)
+                display_cmd = (
+                    style(f"cd {cwd}", fg="grey") + " && " + " ".join(display_args)
+                )
             else:
-                display_cmd = " ".join(args)
+                display_cmd = " ".join(display_args)
             echo(style("$ ", fg="yellow") + display_cmd)
         return subprocess.run(  # noqa: S603
             list(args),

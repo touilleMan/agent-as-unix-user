@@ -64,6 +64,24 @@ def test_new_agent_records_commands_and_writes_config(state: AppState) -> None:
     assert any(call.args[:1] == ("make",) for call in state.runner.calls)
 
 
+def test_run_releases_config_lock_before_continuing(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[[agents]]\n"
+        'user_name = "agent"\n'
+        'su_as_agent_group = "su-as-agent"\n'
+        'entrypoint = "/tmp/su_as_agent"\n'
+        "bootstrapped = true\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli, ["-C", str(config_path), "run", "--user", "agent", "echo"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.index("Relese config lock") < result.output.index("Now exit")
+
+
 # def test_run_forwards_command_to_entrypoint() -> None:
 #     with tempfile.TemporaryDirectory() as tmp:
 #         tmp_path = Path(tmp)

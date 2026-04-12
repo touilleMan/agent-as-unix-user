@@ -19,10 +19,16 @@ def list_agents(state: AppState) -> None:
         if health.is_ok:
             echo(f"{style(agent.user_name, fg='green')}")
         else:
-            echo(f"{style(agent.user_name, fg='red')}")
+            echo(f"{style(agent.user_name, fg='green')} ({style('BROKEN', fg='red')})")
         echo(f"  home: {style(health.home, fg='yellow')}")
         echo(f"  group: {style(agent.su_as_agent_group, fg='yellow')}")
         echo(f"  entrypoint: {style(agent.entrypoint, fg='yellow')}")
+        echo(f"  accesses: {style(agent.entrypoint, fg='yellow')}")
+        if agent.acl_external_accesses:
+            echo("  ACL external accesses:")
+            for access in agent.acl_external_accesses:
+                echo(f"    - {access}")
+        echo(f"  accesses: {style(agent.entrypoint, fg='yellow')}")
         if health.errors:
             echo(style("  issues:", fg="red"))
             for reason in health.errors:

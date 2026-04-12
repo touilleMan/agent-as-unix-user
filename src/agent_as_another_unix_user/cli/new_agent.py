@@ -54,6 +54,7 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         su_as_agent_group=su_as_agent_group,
         entrypoint=str(entrypoint),
         bootstrapped=False,
+        acl_external_accesses=[],
     )
     state.config.upsert_agent(agent_config)
     state.config.save()

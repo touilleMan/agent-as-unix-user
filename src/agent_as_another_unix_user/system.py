@@ -30,7 +30,11 @@ def expected_home(user_name: str, home_root: Path = Path("/home")) -> Path:
 
 def user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str, str]]:
     result = runner.run(
-        ["getent", "passwd", user_name], capture_output=True, text=True, check=False
+        ["getent", "passwd", user_name],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
     )
     if result.returncode != 0 or not (result.stdout or "").strip():
         return False, {}
@@ -47,13 +51,19 @@ def user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str, 
 
 def group_exists(runner: CommandRunner, group_name: str) -> bool:
     result = runner.run(
-        ["getent", "group", group_name], capture_output=True, text=True, check=False
+        ["getent", "group", group_name],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
     )
     return result.returncode == 0 and bool((result.stdout or "").strip())
 
 
 def current_user_groups(runner: CommandRunner) -> set[str]:
-    result = runner.run(["id", "-nG"], capture_output=True, text=True, check=False)
+    result = runner.run(
+        ["id", "-nG"], capture_output=True, text=True, check=False, quiet=True
+    )
     if result.returncode != 0:
         return set()
     return set((result.stdout or "").split())
@@ -79,7 +89,11 @@ def acl_supported(runner: CommandRunner) -> bool:
 
 def read_default_acl(runner: CommandRunner, path: Path) -> str:
     result = runner.run(
-        ["getfacl", "-p", "-d", str(path)], capture_output=True, text=True, check=False
+        ["getfacl", "-p", "-d", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
     )
     if result.returncode != 0:
         return ""
@@ -111,7 +125,7 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
     if home.exists() and not has_setgid(home):
         errors.append("home directory missing setgid bit")
 
-    # TODO: check home directory use the 770 rights
+    # TODO: check home directory use the 771 rights
 
     default_acl = read_default_acl(runner, home) if home.exists() else ""
     if not default_acl:

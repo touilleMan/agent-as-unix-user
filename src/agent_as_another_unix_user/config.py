@@ -35,6 +35,24 @@ class AgentConfig:
 
     Might be `False` if new agent command couldn't finish...
     """
+    acl_external_accesses: list[str]
+    """
+    We track the ACL rights that have been given to this agent here since the
+    OS doesn't provide a centralized way to get this info.
+
+    Indeed: ACL rights are set as extended attribute in the file system, so
+    in theory we should do a full scan of the filesystem to find all the
+    files/folders that have ACL for our agent UID/GID.
+
+    On top of that it is important to remove those ACL rights once the agent
+    user has been deleted to avoid vulnerabilities related to UID recycling (
+    i.e. a newly created user might get the UID of our deleted user and hence
+    is able to use the ACL we forgot to remove).
+
+    Of course the tracking we do here only concern the ACL that have been set
+    through our own commands however this seems like a good enough security
+    as long as the end-user is aware he shouldn't be playing with ACL on his own.
+    """
 
 
 @dataclass(slots=True)
@@ -125,6 +143,9 @@ class Config:
                         su_as_agent_group=str(item["su_as_agent_group"]),
                         entrypoint=str(item["entrypoint"]),
                         bootstrapped=bool(item["bootstrapped"]),
+                        acl_external_accesses=[
+                            str(a) for a in item.get("acl_external_accesses", [])
+                        ],
                     )
                     for item in data.get("agents", [])
                 ]
