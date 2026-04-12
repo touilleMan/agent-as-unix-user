@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import click
+from click import style
+import getpass
+from pathlib import Path
+import shutil
 
-from ..config import AgentConfig, Config
+from ..config import AgentConfig
 from ..system import (
     acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
     entrypoint_src_makefile,
     agent_readme_content,
     entrypoint_src_dir,
-    current_user_name,
-    expected_group_name,
+    expected_su_as_agent_group,
     expected_home,
 )
 from . import AppState, cli
@@ -18,23 +21,22 @@ from . import AppState, cli
 
 @cli.command("new")
 @click.option("--user", "user_name", default="agent", show_default=True)
-@click.option("--dry-run", is_flag=True, help="Print actions without executing them.")
 @click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
-def new_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
+def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     config_path = state.config_path
-    group_name = expected_group_name(user_name)
+    su_as_agent_group = expected_su_as_agent_group(user_name)
     home = expected_home(user_name, state.home_root)
     entrypoint = home / "su_as_agent"
     entrypoint_src = entrypoint_src_dir(home)
 
     if state.config.get_agent(user_name) is not None:
         raise click.ClickException(
-            f"agent {user_name!r} already exists in {config_path}"
+            f"Agent {style(user_name, fg='red')} already exists in {style(config_path, fg='yellow')}"
         )
 
     if not yes and not click.confirm(
-        f"Create agent {user_name!r} in {home} and configure group {group_name!r}?",
+        f"Create agent {style(user_name, fg='green')} in {home} and configure group {su_as_agent_group!r}?",
         default=False,
     ):
         raise click.Abort()
@@ -44,62 +46,129 @@ def new_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None
             "ACL support is required but not available on this system"
         )
 
-    uid_result = state.runner.run(
-        ["id", "-u", user_name], capture_output=True, text=True, check=False
-    )
-    target_uid = (uid_result.stdout or "").strip() or "1000"
+    # Update config to keep track of the fact a new agent is
+    # being created (important for cleanup if we crash...)
 
-    commands = [
-        ["groupadd", group_name],
+    agent_config = AgentConfig(
+        user_name=user_name,
+        su_as_agent_group=su_as_agent_group,
+        entrypoint=str(entrypoint),
+        bootstrapped=False,
+    )
+    state.config.upsert_agent(agent_config)
+    state.config.save()
+
+    # Create the UNIX stuff
+
+    # Create the su_as_agent UNIX group
+    state.runner.run(["sudo", "groupadd", su_as_agent_group])
+    # Create UNIX user
+    bash_path = shutil.which("bash")
+    if bash_path:
+        shell_opts = ["--shell", bash_path]
+    else:
+        # Use default shell
+        shell_opts = []
+    state.runner.run(
         [
+            "sudo",
             "useradd",
+            *shell_opts,
+            "--no-user-group",
             "--create-home",
             "--home-dir",
             str(home),
             "--gid",
-            group_name,
+            su_as_agent_group,
             user_name,
-        ],
-        ["usermod", "-a", "-G", group_name, current_user_name()],
-        ["chmod", "2775", str(home)],
-        ["setfacl", "-m", f"g:{group_name}:rwx", str(home)],
-        ["setfacl", "-m", f"d:g:{group_name}:rwx", str(home)],
-    ]
-    for command in commands:
-        state.runner.run(command)
-
-    entrypoint_src.mkdir(parents=True, exist_ok=True)
-    entrypoint_src.joinpath("main.c").write_text(
-        ENTRYPOINT_SRC_MAIN_C, encoding="utf-8"
+        ]
     )
-    entrypoint_src.joinpath("Makefile").write_text(
-        entrypoint_src_makefile(target_uid), encoding="utf-8"
+    # Give access to the su_as_agent UNIX group to our user
+    state.runner.run(
+        [
+            "sudo",
+            "usermod",
+            "--append",
+            "--groups",
+            su_as_agent_group,
+            getpass.getuser(),
+        ]
     )
-    entrypoint_src.joinpath("README.md").write_text(
-        "Source directory for the su_as_agent entrypoint.\n", encoding="utf-8"
+    # Configure setgid for the agent's home dir with the su_as_agent UNIX group
+    # This way all file/directory created within the home dir will have the
+    # su_as_agent UNIX group instead of the default group of the creator.
+    # This is useful to ensure all files created in the home can be modified
+    # by all members of the su_as_agent UNIX group.
+    state.runner.run(["sudo", "chmod", "2770", str(home)])
+    # But that's not all! We also need to ensure the umask a user is using won't
+    # create a file that cannot be modified by the group.
+    # For this we use the ACL defaults to ensure the group always has RWX rights.
+    state.runner.run(
+        [
+            "sudo",
+            "setfacl",
+            "--modify",
+            f"default:group:{su_as_agent_group}:rwx",
+            str(home),
+        ]
     )
 
-    state.runner.run(["make", "-C", str(entrypoint_src)])
-    state.runner.run(["cp", str(entrypoint_src / "su_as_agent"), str(entrypoint)])
-    state.runner.run(["chown", f"{user_name}:{group_name}", str(entrypoint)])
-    state.runner.run(["chmod", "4750", str(entrypoint)])
+    # Since the UNIX group has just been created, our current session doesn't
+    # have access to it!
+    # So any write operation must be done as a shell command with `sg <UNIX group>`
+    # as prefix (which execute command as this group ID).
 
-    agent_config = AgentConfig(
-        user_name=user_name,
-        su_as_agent_group=group_name,
-        entrypoint=str(entrypoint),
-    )
+    # Convoluted wait to copy a file since we must use `sg`
+    def _sg_copy_file(target: Path, input: str) -> None:
+        state.runner.run(
+            ["sg", su_as_agent_group, "-c", f"tee {target}"],
+            input=input,
+            # tee writes on stdout so silence this
+            capture_output=True,
+        )
 
-    home.mkdir(parents=True, exist_ok=True)
-    home.joinpath("README.md").write_text(
+    _sg_copy_file(
+        home / "README.md",
         agent_readme_content(
             agent_config,
             config_path,
             home,
         ),
-        encoding="utf-8",
     )
 
-    with Config.open(config_path) as config:
-        config.upsert_agent(agent_config)
-    click.echo(f"Created agent {user_name!r}")
+    # Compile and install the entrypoint
+
+    target_uid = state.runner.run(
+        ["id", "-u", user_name], capture_output=True, text=True, check=False, quiet=True
+    ).stdout.strip()
+    int(target_uid)  # Sanity check to ensure we got the user ID
+
+    state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {entrypoint_src}"])
+
+    _sg_copy_file(entrypoint_src / "main.c", ENTRYPOINT_SRC_MAIN_C)
+    _sg_copy_file(entrypoint_src / "Makefile", entrypoint_src_makefile(target_uid))
+
+    state.runner.run(["sg", su_as_agent_group, "-c", f"make -C {entrypoint_src}"])
+    state.runner.run(
+        [
+            "sg",
+            su_as_agent_group,
+            "-c",
+            f"cp {entrypoint_src / 'su_as_agent'} {entrypoint}",
+        ]
+    )
+    # Here is the secret sauce:
+    # - Set the agent user as the entrypoint binary's owner.
+    # - Set the SetUID bit on the entrypoint binary. The make it runs
+    #   with the file owner's privileges instead of the caller's.
+    state.runner.run(
+        ["sudo", "chown", f"{user_name}:{su_as_agent_group}", str(entrypoint)]
+    )
+    # Note the leading `4` in chmod, this is the setuid bit
+    state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
+
+    # Finally update again the config to acknowledge the agent is ready
+    state.config.upsert_agent(agent_config)
+    state.config.save()
+
+    click.echo(f"Created agent {style(user_name, fg='green')}")

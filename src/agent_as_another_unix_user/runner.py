@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
+from click import echo, style
 import subprocess
 
 
@@ -16,6 +17,7 @@ class CommandRunner(Protocol):
         capture_output: bool = False,
         text: bool = True,
         input: str | None = None,
+        quiet: bool = False,
     ) -> subprocess.CompletedProcess[str]: ...
 
 
@@ -29,7 +31,14 @@ class SubprocessRunner:
         capture_output: bool = False,
         text: bool = True,
         input: str | None = None,
+        quiet: bool = False,
     ) -> subprocess.CompletedProcess[str]:
+        if not quiet:
+            if cwd:
+                display_cmd = style(f"cd {cwd}", fg="grey") + " && " + " ".join(args)
+            else:
+                display_cmd = " ".join(args)
+            echo(style("$ ", fg="yellow") + display_cmd)
         return subprocess.run(  # noqa: S603
             list(args),
             cwd=str(cwd) if cwd is not None else None,
@@ -74,6 +83,7 @@ class RecordingCommandRunner:
         capture_output: bool = False,
         text: bool = True,
         input: str | None = None,
+        quiet: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         call = RecordingCommandCall(
             args=tuple(args),

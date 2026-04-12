@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import getpass
 import os
 
 
@@ -21,11 +20,7 @@ class HealthCheckResult:
         return not self.errors
 
 
-def current_user_name() -> str:
-    return os.environ.get("SUDO_USER") or getpass.getuser()
-
-
-def expected_group_name(user_name: str) -> str:
+def expected_su_as_agent_group(user_name: str) -> str:
     return f"su-as-{user_name}"
 
 
@@ -73,7 +68,11 @@ def resolve_agent_home(runner: CommandRunner, user_name: str) -> Path:
 
 def acl_supported(runner: CommandRunner) -> bool:
     result = runner.run(
-        ["setfacl", "--version"], capture_output=True, text=True, check=False
+        ["setfacl", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
     )
     return result.returncode == 0
 
@@ -112,6 +111,8 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
     if home.exists() and not has_setgid(home):
         errors.append("home directory missing setgid bit")
 
+    # TODO: check home directory use the 770 rights
+
     default_acl = read_default_acl(runner, home) if home.exists() else ""
     if not default_acl:
         errors.append("missing default ACL configuration or ACL unsupported")
@@ -123,6 +124,8 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
         errors.append(f"missing entrypoint: {entrypoint}")
     elif not os.access(entrypoint, os.X_OK):
         errors.append(f"entrypoint is not executable: {entrypoint}")
+    # TODO: check that entrypoint is owned by the agent user
+    # TODO: check that entrypoint has setuid bit set
 
     groups = current_user_groups(runner)
     if agent.su_as_agent_group not in groups:
@@ -177,7 +180,7 @@ ENTRYPOINT_SRC_MAIN_C = """
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <command> [args...]\n", argv[0]);
+        fprintf(stderr, "usage: %s <command> [args...]\\n", argv[0]);
         return 2;
     }
     if (setuid(TARGET_UID) != 0) {

@@ -6,12 +6,12 @@ from pathlib import Path
 import fcntl
 import json
 import os
-import sys
 import time
 import tomllib
 from typing import Iterator, TextIO
-
 from click import style
+
+from .utils import Spinner
 
 DEFAULT_CONFIG_FILENAME = "agent-as-another-unix-user.toml"
 DEFAULT_GROUP_PREFIX = "su-as-"
@@ -24,8 +24,17 @@ def default_config_path() -> Path:
 @dataclass(slots=True)
 class AgentConfig:
     user_name: str
+    "UNIX user name"
     su_as_agent_group: str
+    "UNIX group to be able to use the entrypoint and read/write the agent home"
     entrypoint: str
+    "Path to the binary to execute to run command as the agent user"
+    bootstrapped: bool
+    """
+    If the agent has been fully configured (UNIX user, group etc.).
+
+    Might be `False` if new agent command couldn't finish...
+    """
 
 
 @dataclass(slots=True)
@@ -64,12 +73,16 @@ class Config:
                     f"user_name = {json.dumps(agent.user_name)}",
                     f"su_as_agent_group = {json.dumps(agent.su_as_agent_group)}",
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
+                    f"bootstrapped = {json.dumps(agent.bootstrapped)}",
                     "",
                 ]
             )
         return "\n".join(lines).rstrip() + ("\n" if lines else "")
 
     def save(self) -> None:
+        # TODO: In theory we should first write the new config in
+        #       a temporary file then do a move for atomiicty, but
+        #       we also need to take care of the lock...
         assert self._fh is not None, (
             "Config.save() can only be used inside Config.open()"
         )
@@ -94,7 +107,9 @@ class Config:
                     break
                 except BlockingIOError:
                     if not spinner:
-                        spinner = _LockSpinner(path)
+                        spinner = Spinner(
+                            f"Waiting for lock on {style(path, fg='yellow')}"
+                        )
                     spinner.tick()
                     time.sleep(0.1)
             if spinner:
@@ -109,6 +124,7 @@ class Config:
                         user_name=str(item["user_name"]),
                         su_as_agent_group=str(item["su_as_agent_group"]),
                         entrypoint=str(item["entrypoint"]),
+                        bootstrapped=bool(item["bootstrapped"]),
                     )
                     for item in data.get("agents", [])
                 ]
@@ -122,27 +138,3 @@ class Config:
                     config.save()
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-
-class _LockSpinner:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._started = False
-        self._frames = "|/-\\"
-        self._index = 0
-        self._message = f"Waiting for lock on {style(path, fg='yellow')} "
-        self._width = len(self._message) + 1
-
-    def tick(self) -> None:
-        frame = self._frames[self._index % len(self._frames)]
-        self._index += 1
-        if not self._started:
-            self._started = True
-        sys.stderr.write(f"\r{self._message}{style(frame, fg='green')}")
-        sys.stderr.flush()
-
-    def stop(self) -> None:
-        if not self._started:
-            return
-        sys.stderr.write("\r" + (" " * self._width) + "\r")
-        sys.stderr.flush()

@@ -6,7 +6,7 @@ import click
 
 from ..config import Config
 from ..system import (
-    expected_group_name,
+    expected_su_as_agent_group,
     expected_home,
     resolve_agent_home,
     entrypoint_src_dir,
@@ -22,7 +22,9 @@ from . import AppState, cli
 def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
     config_path = state.config_path
     agent = state.config.get_agent(user_name)
-    group_name = agent.su_as_agent_group if agent else expected_group_name(user_name)
+    group_name = (
+        agent.su_as_agent_group if agent else expected_su_as_agent_group(user_name)
+    )
     home = (
         expected_home(user_name, state.home_root)
         if agent is None
