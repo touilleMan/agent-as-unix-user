@@ -29,6 +29,15 @@ class AgentConfig:
     "UNIX group to be able to use the entrypoint and read/write the agent home"
     entrypoint: str
     "Path to the binary to execute to run command as the agent user"
+    entrypoint_sha256: str
+    """
+    Keep a fingerprint of the entrypoint to detect any modification.
+
+    This is important since the entrypoint is responsible for dropping
+    the user's rights, so a malicious agent might want to modify it (which
+    is possible in the first place since the entrypoint *must* be owned by
+    the agent) in order to trick the human into doing something.
+    """
     bootstrapped: bool
     """
     If the agent has been fully configured (UNIX user, group etc.).
@@ -91,6 +100,7 @@ class Config:
                     f"user_name = {json.dumps(agent.user_name)}",
                     f"su_as_agent_group = {json.dumps(agent.su_as_agent_group)}",
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
+                    f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
                     f"bootstrapped = {json.dumps(agent.bootstrapped)}",
                     "",
                 ]
@@ -142,6 +152,7 @@ class Config:
                         user_name=str(item["user_name"]),
                         su_as_agent_group=str(item["su_as_agent_group"]),
                         entrypoint=str(item["entrypoint"]),
+                        entrypoint_sha256=str(item["entrypoint_sha256"]),
                         bootstrapped=bool(item["bootstrapped"]),
                         acl_external_accesses=[
                             str(a) for a in item.get("acl_external_accesses", [])

@@ -19,7 +19,7 @@ class CommandRunner(Protocol):
         input: str | None = None,
         quiet: bool = False,
         **kwargs,
-    ) -> subprocess.CompletedProcess[str]: ...
+    ) -> subprocess.CompletedProcess: ...
 
 
 class SubprocessRunner:
@@ -34,7 +34,7 @@ class SubprocessRunner:
         input: str | None = None,
         quiet: bool = False,
         **kwargs,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess:
         if not quiet:
             display_args = [
                 f"'{a.replace("'", "\\'")}'" if " " in a else a for a in args
@@ -77,7 +77,7 @@ class RecordingCommandRunner:
 
     def __init__(
         self,
-        handler: Callable[[RecordingCommandCall], subprocess.CompletedProcess[str]]
+        handler: Callable[[RecordingCommandCall], subprocess.CompletedProcess]
         | None = None,
     ) -> None:
         self.calls: list[RecordingCommandCall] = []
@@ -94,7 +94,7 @@ class RecordingCommandRunner:
         input: str | None = None,
         quiet: bool = False,
         **kwargs,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> subprocess.CompletedProcess:
         call = RecordingCommandCall(
             args=tuple(args),
             cwd=Path(cwd) if cwd is not None else None,

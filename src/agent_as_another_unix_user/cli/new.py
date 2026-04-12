@@ -5,6 +5,7 @@ from click import style
 import getpass
 from pathlib import Path
 import shutil
+import shlex
 
 from ..config import AgentConfig
 from ..system import (
@@ -15,6 +16,7 @@ from ..system import (
     entrypoint_src_dir,
     expected_su_as_agent_group,
     expected_home,
+    compute_sha256_fingerprint,
 )
 from . import AppState, cli
 
@@ -53,6 +55,7 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         user_name=user_name,
         su_as_agent_group=su_as_agent_group,
         entrypoint=str(entrypoint),
+        entrypoint_sha256="<unknown>",
         bootstrapped=False,
         acl_external_accesses=[],
     )
@@ -184,6 +187,28 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
 
     # Finally update again the config to acknowledge the agent is ready
+
+    result = state.runner.run(
+        [
+            # The agent user has just been created, we should re-login to have
+            # our groups being updated (so that `agent.su_as_agent_group` appears).
+            # So we use sg here to instead force execute the command as group
+            # `agent.su_as_agent_group` which works without even with re-login.
+            "sg",
+            "-",
+            su_as_agent_group,
+            "-c",
+            shlex.join(["cat", str(entrypoint)]),
+        ],
+        capture_output=True,
+        text=False,
+        quiet=True,
+    )
+    assert isinstance(result.stdout, bytes)
+    agent_config.entrypoint_sha256 = compute_sha256_fingerprint(result.stdout)
+
+    agent_config.bootstrapped = True
+
     state.config.upsert_agent(agent_config)
     state.config.save()
 

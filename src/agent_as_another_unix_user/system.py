@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
 import os
@@ -158,6 +159,10 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
     )
 
 
+def compute_sha256_fingerprint(data: bytes) -> str:
+    return sha256(data).digest().hex()
+
+
 def entrypoint_src_dir(home: Path) -> Path:
     return home / ".config" / "agent-as-another-unix-user" / "su_as_agent-src"
 
@@ -230,8 +235,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    execve(argv[1], &argv[1]);
-    perror("execve");
+    execvp(argv[1], &argv[1]);
+    perror("execv");
     return 1;
 }
 """

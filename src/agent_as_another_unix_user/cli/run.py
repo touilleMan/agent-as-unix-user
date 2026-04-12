@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import shlex
 import click
+from click import style
 import os
 
 from . import AppState, cli
+from ..system import compute_sha256_fingerprint
 
 
 KEPT_ENVIRON_VARIALBES = ("LANG", "TERM")
@@ -57,11 +59,33 @@ def run_as_agent(
     # so closing the current command context would not release it yet.
     ctx.find_root().close()
 
-    # entrypoint = Path(agent.entrypoint)
-    # if not entrypoint.exists():
-    #     raise click.ClickException(f"entrypoint does not exist: {entrypoint}")
-    # if not os.access(entrypoint, os.X_OK):
-    #     raise click.ClickException(f"entrypoint is not executable: {entrypoint}")
+    # Sanity check
+
+    result = state.runner.run(
+        [
+            # If the agent user has just been created, we should re-login
+            # to have our groups being updated (so that `agent.su_as_agent_group`
+            # appears).
+            # So we use sg here to instead force execute the command as group
+            # `agent.su_as_agent_group` which works without even with re-login.
+            "sg",
+            "-",
+            agent.su_as_agent_group,
+            "-c",
+            shlex.join(["cat", agent.entrypoint]),
+        ],
+        capture_output=True,
+        text=False,
+        quiet=True,
+    )
+    assert isinstance(result.stdout, bytes)
+    entrypoint_sha256 = compute_sha256_fingerprint(result.stdout)
+    if entrypoint_sha256 != agent.entrypoint_sha256:
+        raise click.ClickException(
+            f"entrypoint {style(agent.entrypoint, fg='yellow')} has changed: "
+            f"expected hash {style(agent.entrypoint_sha256, fg='green')}, "
+            f"got {style(entrypoint_sha256, fg='red')}"
+        )
 
     result = state.runner.run(
         [
@@ -88,7 +112,4 @@ def run_as_agent(
             **environs,
         },
     )
-    if result.returncode != 0:
-        raise click.ClickException(
-            f"agent command failed with exit code {result.returncode}"
-        )
+    raise SystemExit(result.returncode)
