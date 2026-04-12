@@ -55,6 +55,7 @@ def cli(ctx: click.Context, config_path: Path) -> None:
 
 
 # Import does a side effect that register the sub command in `cli`
+from . import access as _access  # noqa: E402,F401
 from . import delete as _delete  # noqa: E402,F401
 from . import info as _info  # noqa: E402,F401
 from . import list as _list  # noqa: E402,F401

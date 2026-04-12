@@ -102,6 +102,7 @@ class Config:
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
                     f"bootstrapped = {json.dumps(agent.bootstrapped)}",
+                    f"acl_external_accesses = {json.dumps(agent.acl_external_accesses)}",
                     "",
                 ]
             )

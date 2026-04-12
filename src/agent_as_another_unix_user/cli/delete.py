@@ -98,7 +98,30 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
     if agent_home_to_delete:
         state.runner.run(["sudo", "rm", "-rf", agent_home_to_delete], check=False)
 
-    # TODO: clear ACLs
+    # Clear ACL external accesses
+    for access_path in agent.acl_external_accesses:
+        state.runner.run(
+            [
+                "sudo",
+                "setfacl",
+                "--recursive",
+                "--remove",
+                f"user:{user_name}",
+                access_path,
+            ],
+            check=False,
+        )
+        state.runner.run(
+            [
+                "sudo",
+                "setfacl",
+                "--recursive",
+                "--remove",
+                f"default:user:{user_name}",
+                access_path,
+            ],
+            check=False,
+        )
 
     state.config.remove_agent(user_name)
     state.config.save()

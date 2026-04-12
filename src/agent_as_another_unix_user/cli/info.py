@@ -23,12 +23,12 @@ def info(state: AppState, user_name: str) -> None:
     echo(f"  home: {style(health.home, fg='yellow')}")
     echo(f"  group: {style(agent.su_as_agent_group, fg='yellow')}")
     echo(f"  entrypoint: {style(agent.entrypoint, fg='yellow')}")
-    echo(f"  accesses: {style(agent.entrypoint, fg='yellow')}")
     if agent.acl_external_accesses:
-        echo("  ACL external accesses:")
+        echo("  external accesses:")
         for access in agent.acl_external_accesses:
-            echo(f"    - {access}")
-    echo(f"  accesses: {style(agent.entrypoint, fg='yellow')}")
+            echo(f"    - {style(access, fg='yellow')}")
+    else:
+        echo("  external accesses: none")
     if health.errors:
         echo(style("  issues:", fg="red"))
         for reason in health.errors:
