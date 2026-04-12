@@ -20,8 +20,8 @@ from . import AppState, cli
 
 
 @cli.command("new")
-@click.option("--user", "user_name", default="agent", show_default=True)
-@click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
+@click.option("--agent", "-a", "user_name", default="agent", show_default=True)
+@click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
 def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     config_path = state.config_path
@@ -140,14 +140,29 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     # Compile and install the entrypoint
 
     target_uid = state.runner.run(
-        ["id", "-u", user_name], capture_output=True, text=True, check=False, quiet=True
+        ["id", "--user", user_name],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
     ).stdout.strip()
     int(target_uid)  # Sanity check to ensure we got the user ID
+    target_gid = state.runner.run(
+        ["id", "--group", user_name],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
+    ).stdout.strip()
+    int(target_gid)  # Sanity check to ensure we got the user ID
 
     state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {entrypoint_src}"])
 
     _sg_copy_file(entrypoint_src / "main.c", ENTRYPOINT_SRC_MAIN_C)
-    _sg_copy_file(entrypoint_src / "Makefile", entrypoint_src_makefile(target_uid))
+    _sg_copy_file(
+        entrypoint_src / "Makefile",
+        entrypoint_src_makefile(target_uid=target_uid, target_gid=target_gid),
+    )
 
     state.runner.run(["sg", su_as_agent_group, "-c", f"make -C {entrypoint_src}"])
     state.runner.run(

@@ -192,15 +192,40 @@ ENTRYPOINT_SRC_MAIN_C = """
 #error TARGET_UID is not defined (compiling without the Makefile ?)
 #endif
 
+#ifndef TARGET_GID
+// `TARGET_GID` is defined by the Makefile
+#error TARGET_GID is not defined (compiling without the Makefile ?)
+#endif
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <command> [args...]\\n", argv[0]);
         return 2;
     }
+
+    uid_t original_uid = getuid();
+
+    if (setgroups(0, NULL) != 0) {
+        perror("setgroups");
+        return 1;
+    }
+
+    if (setgid(TARGET_GID) != 0) {
+        perror("setgid");
+        return 1;
+    }
+
     if (setuid(TARGET_UID) != 0) {
         perror("setuid");
         return 1;
     }
+
+    // Sanity check to ensure we cannot get back access to the original UID
+    if (setuid(original_uid) != -1) {
+        fprintf(stderr, "ERROR: was able to regain original user access — aborting!\n");
+        return 1;
+    }
+
     execvp(argv[1], &argv[1]);
     perror("execvp");
     return 1;
@@ -208,14 +233,15 @@ int main(int argc, char **argv) {
 """
 
 
-def entrypoint_src_makefile(target_uid: str) -> str:
+def entrypoint_src_makefile(target_uid: str, target_gid: str) -> str:
     return f"""\
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra
 TARGET_UID ?= {target_uid}
+TARGET_GID ?= {target_gid}
 
 all: su_as_agent
 
 su_as_agent: main.c
-	$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -o $@ $<
+	$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -DTARGET_GID=$(TARGET_GID) -o $@ $<
 """

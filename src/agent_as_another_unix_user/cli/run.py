@@ -8,7 +8,7 @@ from . import AppState, cli
 
 
 @cli.command("run")
-@click.option("--user", "user_name", default="agent", show_default=True)
+@click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.argument("command", nargs=-1, required=True)
 @click.pass_obj
 @click.pass_context

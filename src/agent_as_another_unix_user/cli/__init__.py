@@ -54,10 +54,12 @@ def cli(ctx: click.Context, config_path: Path) -> None:
     #       (it defaults to `True`) to disable this sanity check.
 
 
-from . import delete_agent as _delete_agent  # noqa: E402,F401
-from . import list_agents as _list_agents  # noqa: E402,F401
-from . import new_agent as _new_agent  # noqa: E402,F401
-from . import run_as_agent as _run_as_agent  # noqa: E402,F401
+# Import does a side effect that register the sub command in `cli`
+from . import delete as _delete  # noqa: E402,F401
+from . import info as _info  # noqa: E402,F401
+from . import list as _list  # noqa: E402,F401
+from . import new as _new  # noqa: E402,F401
+from . import run as _run  # noqa: E402,F401
 
 
 def main() -> None:

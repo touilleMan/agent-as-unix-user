@@ -15,9 +15,11 @@ from . import AppState, cli
 
 
 @cli.command("delete")
-@click.option("--user", "user_name", default="agent", show_default=True)
-@click.option("--dry-run", is_flag=True, help="Print actions without executing them.")
-@click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
+@click.option("--agent", "-a", "user_name", default="agent", show_default=True)
+@click.option(
+    "--dry-run", "-d", is_flag=True, help="Print actions without executing them."
+)
+@click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
 def delete_agent(state: AppState, user_name: str, dry_run: bool, yes: bool) -> None:
     config_path = state.config_path
