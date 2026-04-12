@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 from click import echo, style
 import subprocess
 
@@ -18,6 +18,7 @@ class CommandRunner(Protocol):
         text: bool = True,
         input: str | None = None,
         quiet: bool = False,
+        **kwargs,
     ) -> subprocess.CompletedProcess[str]: ...
 
 
@@ -32,9 +33,12 @@ class SubprocessRunner:
         text: bool = True,
         input: str | None = None,
         quiet: bool = False,
+        **kwargs,
     ) -> subprocess.CompletedProcess[str]:
         if not quiet:
-            display_args = [f"'{a}'" if " " in a else a for a in args]
+            display_args = [
+                f"'{a.replace("'", "\\'")}'" if " " in a else a for a in args
+            ]
             if cwd:
                 display_cmd = (
                     style(f"cd {cwd}", fg="grey") + " && " + " ".join(display_args)
@@ -49,17 +53,19 @@ class SubprocessRunner:
             capture_output=capture_output,
             text=text,
             input=input,
+            **kwargs,
         )
 
 
 @dataclass(frozen=True, slots=True)
 class RecordingCommandCall:
     args: tuple[str, ...]
-    cwd: Path | None = None
-    check: bool = True
-    capture_output: bool = False
-    text: bool = True
-    input: str | None = None
+    cwd: Path | None
+    check: bool
+    capture_output: bool
+    text: bool
+    input: str | None
+    kwargs: dict[str, Any]
 
 
 class RecordingCommandRunner:
@@ -87,6 +93,7 @@ class RecordingCommandRunner:
         text: bool = True,
         input: str | None = None,
         quiet: bool = False,
+        **kwargs,
     ) -> subprocess.CompletedProcess[str]:
         call = RecordingCommandCall(
             args=tuple(args),
@@ -95,6 +102,7 @@ class RecordingCommandRunner:
             capture_output=capture_output,
             text=text,
             input=input,
+            kwargs=kwargs,
         )
         self.calls.append(call)
 

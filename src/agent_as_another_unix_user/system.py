@@ -182,6 +182,7 @@ That command will remove the UNIX user, group, home directory and all data.
 
 
 ENTRYPOINT_SRC_MAIN_C = """
+#define _GNU_SOURCE  // Needed for setresgid/setresuid
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -203,31 +204,34 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    // Sanity check to ensure the caller hasn't forget to scrub his environ variable before calling us
+    if (getenv("USER") != NULL) {
+        fprintf(stderr, "ERROR: environ variables haven't been scrub — aborting!\\n");
+        return 1;
+    }
+
     uid_t original_uid = getuid();
 
-    if (setgroups(0, NULL) != 0) {
-        perror("setgroups");
+    // Permanently drop our original user privilege and become the agent
+
+    if (setresgid(TARGET_GID, TARGET_GID, TARGET_GID) != 0) {
+        perror("setresgid");
         return 1;
     }
 
-    if (setgid(TARGET_GID) != 0) {
-        perror("setgid");
-        return 1;
-    }
-
-    if (setuid(TARGET_UID) != 0) {
-        perror("setuid");
+    if (setresuid(TARGET_UID, TARGET_UID, TARGET_UID) != 0) {
+        perror("setresuid");
         return 1;
     }
 
     // Sanity check to ensure we cannot get back access to the original UID
     if (setuid(original_uid) != -1) {
-        fprintf(stderr, "ERROR: was able to regain original user access — aborting!\n");
+        fprintf(stderr, "ERROR: was able to regain original user access — aborting!\\n");
         return 1;
     }
 
-    execvp(argv[1], &argv[1]);
-    perror("execvp");
+    execve(argv[1], &argv[1]);
+    perror("execve");
     return 1;
 }
 """
@@ -236,7 +240,7 @@ int main(int argc, char **argv) {
 def entrypoint_src_makefile(target_uid: str, target_gid: str) -> str:
     return f"""\
 CC ?= cc
-CFLAGS ?= -O2 -Wall -Wextra
+CFLAGS ?= -O2 -Wall -Wextra -Werror
 TARGET_UID ?= {target_uid}
 TARGET_GID ?= {target_gid}
 

@@ -1,19 +1,50 @@
 from __future__ import annotations
 
-
+import shlex
 import click
-
+import os
 
 from . import AppState, cli
 
 
+KEPT_ENVIRON_VARIALBES = ("LANG", "TERM")
+
+
+def validate_environs(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> dict[str, str]:
+    cooked = {}
+    for item in value:
+        try:
+            k, v = item.split("=")
+        except ValueError:
+            raise click.BadParameter(
+                f"Invalid value `{item}`, environment must be passed in `KEY=VALUE` format"
+            )
+        cooked[k] = v
+    return cooked
+
+
 @cli.command("run")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
+@click.option(
+    "--env",
+    "-e",
+    "environs",
+    metavar="KEY=VALUE",
+    multiple=True,
+    help="Environ variable to pass on",
+    callback=validate_environs,
+)
 @click.argument("command", nargs=-1, required=True)
 @click.pass_obj
 @click.pass_context
 def run_as_agent(
-    ctx: click.Context, state: AppState, user_name: str, command: tuple[str, ...]
+    ctx: click.Context,
+    state: AppState,
+    user_name: str,
+    environs: dict[str, str],
+    command: tuple[str, ...],
 ) -> None:
     agent = state.config.get_agent(user_name)
     if agent is None:
@@ -43,11 +74,19 @@ def run_as_agent(
             "-",
             agent.su_as_agent_group,
             "-c",
-            f"{agent.entrypoint} {' '.join(command)}",
+            shlex.join([agent.entrypoint, *command]),
         ],
         check=False,
         capture_output=False,
         text=True,
+        env={
+            **{
+                k: v
+                for k in KEPT_ENVIRON_VARIALBES
+                if (v := os.environ.get(k)) is not None
+            },
+            **environs,
+        },
     )
     if result.returncode != 0:
         raise click.ClickException(
