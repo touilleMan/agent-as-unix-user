@@ -82,7 +82,7 @@ def run_as_agent(
     entrypoint_sha256 = compute_sha256_fingerprint(result.stdout)
     if entrypoint_sha256 != agent.entrypoint_sha256:
         raise click.ClickException(
-            f"entrypoint {style(agent.entrypoint, fg='yellow')} has changed: "
+            f"entrypoint {style(agent.entrypoint, fg='yellow')} has been tempered: "
             f"expected hash {style(agent.entrypoint_sha256, fg='green')}, "
             f"got {style(entrypoint_sha256, fg='red')}"
         )

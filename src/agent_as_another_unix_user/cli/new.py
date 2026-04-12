@@ -173,7 +173,7 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
             "sg",
             su_as_agent_group,
             "-c",
-            f"cp {entrypoint_src / 'su_as_agent'} {entrypoint}",
+            f"mv {entrypoint_src / 'su_as_agent'} {entrypoint}",
         ]
     )
     # Here is the secret sauce:
