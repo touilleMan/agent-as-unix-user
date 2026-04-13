@@ -117,6 +117,14 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         ]
     )
 
+    # Grant the agent user execute (traverse) permission on the human's home
+    # directory via ACL. This allows the agent to resolve symlinks pointing
+    # into the human's home without being able to list its contents.
+    human_home = Path.home()
+    state.runner.run(
+        ["sudo", "setfacl", "--modify", f"user:{user_name}:--x", str(human_home)]
+    )
+
     # Since the UNIX group has just been created, our current session doesn't
     # have access to it!
     # So any write operation must be done as a shell command with `sg <UNIX group>`

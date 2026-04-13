@@ -29,7 +29,7 @@ def expected_home(user_name: str, home_root: Path = Path("/home")) -> Path:
     return home_root / user_name
 
 
-def user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str, str]]:
+def _user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str, str]]:
     result = runner.run(
         ["getent", "passwd", user_name],
         capture_output=True,
@@ -50,7 +50,7 @@ def user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str, 
     return True, info
 
 
-def group_exists(runner: CommandRunner, group_name: str) -> bool:
+def _group_exists(runner: CommandRunner, group_name: str) -> bool:
     result = runner.run(
         ["getent", "group", group_name],
         capture_output=True,
@@ -61,7 +61,7 @@ def group_exists(runner: CommandRunner, group_name: str) -> bool:
     return result.returncode == 0 and bool((result.stdout or "").strip())
 
 
-def current_user_groups(runner: CommandRunner) -> set[str]:
+def _current_user_groups(runner: CommandRunner) -> set[str]:
     result = runner.run(
         ["id", "-nG"], capture_output=True, text=True, check=False, quiet=True
     )
@@ -70,11 +70,18 @@ def current_user_groups(runner: CommandRunner) -> set[str]:
     return set((result.stdout or "").split())
 
 
-def resolve_agent_home(runner: CommandRunner, user_name: str) -> Path:
-    ok, info = user_exists(runner, user_name)
-    if ok and info.get("home"):
-        return Path(info["home"])
-    return expected_home(user_name)
+def resolve_agent_home(user_name: str) -> Path | None:
+    tild_agent_home = f"~{user_name}"
+    agent_home_str = os.path.expanduser(tild_agent_home)
+    if agent_home_str == tild_agent_home:
+        # Agent's home doesn't exist
+        return None
+    else:
+        agent_home = Path(agent_home_str)
+        if agent_home.exists():
+            return agent_home
+        else:
+            return None
 
 
 def acl_supported(runner: CommandRunner) -> bool:
@@ -88,7 +95,7 @@ def acl_supported(runner: CommandRunner) -> bool:
     return result.returncode == 0
 
 
-def read_default_acl(runner: CommandRunner, path: Path) -> str:
+def _read_default_acl(runner: CommandRunner, path: Path) -> str:
     result = runner.run(
         ["getfacl", "-p", "-d", str(path)],
         capture_output=True,
@@ -101,7 +108,7 @@ def read_default_acl(runner: CommandRunner, path: Path) -> str:
     return result.stdout or ""
 
 
-def has_setgid(path: Path) -> bool:
+def _has_setgid(path: Path) -> bool:
     try:
         mode = path.stat().st_mode
     except FileNotFoundError:
@@ -109,45 +116,69 @@ def has_setgid(path: Path) -> bool:
     return bool(mode & 0o2000)
 
 
+def _human_home_has_acl_execute(runner: CommandRunner, user_name: str) -> bool:
+    """Check if the human's home directory has an ACL execute entry for *user_name*."""
+    human_home = Path.home()
+    result = runner.run(
+        ["getfacl", "--absolute-names", str(human_home)],
+        capture_output=True,
+        text=True,
+        check=False,
+        quiet=True,
+    )
+    if result.returncode != 0:
+        return False
+    assert isinstance(result.stdout, str)
+    for line in result.stdout.splitlines():
+        # e.g. "user:agent:--x"
+        if line.strip() == f"user:{user_name}:--x":
+            return True
+    return False
+
+
 def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckResult:
     errors: list[str] = []
-    home = resolve_agent_home(runner, agent.user_name)
+    home = resolve_agent_home(agent.user_name)
 
-    user_ok, user_info = user_exists(runner, agent.user_name)
+    user_ok, user_info = _user_exists(runner, agent.user_name)
     if not user_ok:
         errors.append("missing UNIX user")
 
-    if not group_exists(runner, agent.su_as_agent_group):
+    if not _group_exists(runner, agent.su_as_agent_group):
         errors.append("missing UNIX group")
 
-    if not home.exists():
+    if home is None or not home.exists():
         errors.append(f"missing home directory: {home}")
+    else:
+        if _has_setgid(home):
+            errors.append("home directory missing setgid bit")
 
-    if home.exists() and not has_setgid(home):
-        errors.append("home directory missing setgid bit")
-
-    # TODO: check home directory use the 771 rights
-
-    default_acl = read_default_acl(runner, home) if home.exists() else ""
-    if not default_acl:
-        errors.append("missing default ACL configuration or ACL unsupported")
-    elif "default:" not in default_acl:
-        errors.append("default ACL is not configured")
+        default_acl = _read_default_acl(runner, home)
+        if not default_acl:
+            errors.append("missing default ACL configuration or ACL unsupported")
+        elif "default:" not in default_acl:
+            errors.append("default ACL is not configured")
 
     entrypoint = Path(agent.entrypoint)
     if not entrypoint.exists():
         errors.append(f"missing entrypoint: {entrypoint}")
     elif not os.access(entrypoint, os.X_OK):
         errors.append(f"entrypoint is not executable: {entrypoint}")
-    # TODO: check that entrypoint is owned by the agent user
+    # TODO: check that entrypoint is owned by root
     # TODO: check that entrypoint has setuid bit set
 
-    groups = current_user_groups(runner)
+    groups = _current_user_groups(runner)
     if agent.su_as_agent_group not in groups:
         errors.append(f"current user is not a member of {agent.su_as_agent_group}")
 
     if not acl_supported(runner):
         errors.append("ACL is not supported on this system")
+
+    if not _human_home_has_acl_execute(runner, agent.user_name):
+        errors.append(
+            f"human home directory missing ACL execute for {agent.user_name} "
+            f"(expected user:{agent.user_name}:--x on {Path.home()})"
+        )
 
     if user_ok and not user_info.get("home"):
         errors.append("user account has no home directory configured")

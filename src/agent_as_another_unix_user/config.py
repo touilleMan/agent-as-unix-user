@@ -46,21 +46,15 @@ class AgentConfig:
     """
     acl_external_accesses: list[str]
     """
-    We track the ACL rights that have been given to this agent here since the
-    OS doesn't provide a centralized way to get this info.
+    Paths inside the human's home directory that the agent has been given
+    access to via symlinks in the agent's home.
 
-    Indeed: ACL rights are set as extended attribute in the file system, so
-    in theory we should do a full scan of the filesystem to find all the
-    files/folders that have ACL for our agent UID/GID.
+    Each entry is the resolved absolute path of the original target (e.g.
+    ``/home/emmanuel/foo/bar``).  A corresponding symlink exists in the
+    agent's home at the same relative location (e.g. ``/home/agent/foo/bar``
+    pointing to ``/home/emmanuel/foo/bar``).
 
-    On top of that it is important to remove those ACL rights once the agent
-    user has been deleted to avoid vulnerabilities related to UID recycling (
-    i.e. a newly created user might get the UID of our deleted user and hence
-    is able to use the ACL we forgot to remove).
-
-    Of course the tracking we do here only concern the ACL that have been set
-    through our own commands however this seems like a good enough security
-    as long as the end-user is aware he shouldn't be playing with ACL on his own.
+    Removing an access simply means deleting the symlink.
     """
 
 

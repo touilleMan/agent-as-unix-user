@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 
 from click import echo, style
 import click
 
+from ..system import resolve_agent_home
 from . import AppState, cli
 
 
@@ -56,21 +56,21 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
         )
         delete_group = False
 
+    agent_home = resolve_agent_home(agent.user_name)
+
     agent_home_to_delete = None
     if delete_home:
-        tild_agent_home = f"~{agent.user_name}"
-        agent_home = os.path.expanduser(tild_agent_home)
-        if agent_home == tild_agent_home:
+        if agent_home is None:
             echo(
-                f"Skipping removal of home: user {style(agent.user_name, fg='yellow')} has no $HOME"
+                f"Skipping removal of home: {style('~' + agent.user_name, fg='yellow')} doesn't exist"
             )
             delete_home = False
         else:
             try:
-                stat = Path(agent_home).stat()
+                stat = agent_home.stat()
             except FileNotFoundError:
                 echo(
-                    f"Skipping removal of home: user {style(agent.user_name, fg='yellow')} has no $HOME"
+                    f"Skipping removal of home: {style(agent_home, fg='yellow')} doesn't exist"
                 )
                 delete_home = False
             else:
@@ -90,38 +90,33 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
     state.config.upsert_agent(agent)
     state.config.save()
 
+    # Remove symlinks created for external accesses
+    human_home = Path.home()
+    if agent_home is not None:
+        for access_path in agent.acl_external_accesses:
+            try:
+                relative = Path(access_path).relative_to(human_home)
+                symlink_path = agent_home / relative
+                state.runner.run(
+                    ["sudo", "-u", user_name, "rm", "-f", str(symlink_path)],
+                    check=False,
+                )
+            except ValueError:
+                pass
+
     if delete_user:
         state.runner.run(["sudo", "userdel", agent.user_name], check=False)
     if delete_group:
         state.runner.run(["sudo", "groupdel", agent.su_as_agent_group], check=False)
 
     if agent_home_to_delete:
-        state.runner.run(["sudo", "rm", "-rf", agent_home_to_delete], check=False)
+        state.runner.run(["sudo", "rm", "-rf", str(agent_home_to_delete)], check=False)
 
-    # Clear ACL external accesses
-    for access_path in agent.acl_external_accesses:
-        state.runner.run(
-            [
-                "sudo",
-                "setfacl",
-                "--recursive",
-                "--remove",
-                f"user:{user_name}",
-                access_path,
-            ],
-            check=False,
-        )
-        state.runner.run(
-            [
-                "sudo",
-                "setfacl",
-                "--recursive",
-                "--remove",
-                f"default:user:{user_name}",
-                access_path,
-            ],
-            check=False,
-        )
+    # Remove ACL traverse permission on the human's home
+    state.runner.run(
+        ["sudo", "setfacl", "--remove", f"user:{user_name}", str(human_home)],
+        check=False,
+    )
 
     state.config.remove_agent(user_name)
     state.config.save()
