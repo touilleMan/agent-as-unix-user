@@ -99,10 +99,6 @@ class Config:
                 ]
             )
         for agent in self.agents:
-            mounts_toml = ", ".join(
-                f"{{ source = {json.dumps(m.source)}, target = {json.dumps(m.target)} }}"
-                for m in agent.mounts
-            )
             lines.extend(
                 [
                     "[[agents]]",
@@ -111,7 +107,10 @@ class Config:
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
                     f"bootstrapped = {json.dumps(agent.bootstrapped)}",
-                    f"mounts = [{mounts_toml}]",
+                    *(
+                        f"[[agents.mounts]]\nsource = {json.dumps(m.source)}\ntarget = {json.dumps(m.target)}"
+                        for m in agent.mounts
+                    ),
                     "",
                 ]
             )
@@ -155,8 +154,8 @@ class Config:
 
             fh.seek(0)
             raw = fh.read().strip()
+            data = tomllib.loads(raw)
             if raw:
-                data = tomllib.loads(raw)
                 agents = [
                     AgentConfig(
                         user_name=str(item["user_name"]),
@@ -177,8 +176,15 @@ class Config:
             else:
                 agents = []
 
-            disable_home_access_check = bool(data.get("disable_home_access_check", False)) if raw else False
-            config = cls(path=path, agents=agents, disable_home_access_check=disable_home_access_check, _fh=fh)
+            disable_home_access_check = (
+                bool(data.get("disable_home_access_check", False)) if raw else False
+            )
+            config = cls(
+                path=path,
+                agents=agents,
+                disable_home_access_check=disable_home_access_check,
+                _fh=fh,
+            )
             try:
                 yield config
                 if config._dirty:

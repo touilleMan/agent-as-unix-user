@@ -60,10 +60,10 @@ def _check_home_permissions() -> None:
         return
     if mode & stat.S_IROTH or mode & stat.S_IWOTH or mode & stat.S_IXOTH:
         echo(
-            f"{ style("WARNING: ", fg="red", bold=True) } "
-            f"{style(str(home), fg='yellow')} has mode { style(oct(stat.S_IMODE(mode)), bold=True) }, "
-            f"consider running { style(f"chmod 750 {home}", bold=True) } to restrict access. "
-            f"(Disable this check with { style("disable_home_access_check = true", bold=True) } in your config)",
+            f"{style('WARNING: ', fg='red', bold=True)} "
+            f"{style(str(home), fg='yellow')} has mode {style(oct(stat.S_IMODE(mode)), bold=True)}, "
+            f"consider running {style(f'chmod 750 {home}', bold=True)} to restrict access. "
+            f"(Disable this check with {style('disable_home_access_check = true', bold=True)} in your config)",
             err=True,
         )
 

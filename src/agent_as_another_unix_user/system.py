@@ -433,6 +433,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (setenv("HOME", agent_home, 1) != 0) {
+        perror("setenv(HOME)");
+        return 1;
+    }
+
     execvp(argv[cmd_start], &argv[cmd_start]);
     perror("execv");
     return 1;

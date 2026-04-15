@@ -22,7 +22,9 @@ def access_group() -> None:
 )
 @click.argument("target", required=False, default=None, type=Path)
 @click.pass_obj
-def access_add(state: AppState, user_name: str, source: Path, target: Path | None) -> None:
+def access_add(
+    state: AppState, user_name: str, source: Path, target: Path | None
+) -> None:
     """Give the agent read-only access to PATH via a bind mount."""
     agent = state.config.get_agent(user_name)
     if agent is None:
@@ -70,18 +72,25 @@ def access_add(state: AppState, user_name: str, source: Path, target: Path | Non
 
 @access_group.command("remove")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
-@click.argument("target", type=Path)
+@click.argument("source_or_target")
 @click.pass_obj
-def access_remove(state: AppState, user_name: str, target: Path) -> None:
+def access_remove(state: AppState, user_name: str, source_or_target: str) -> None:
     """Revoke the agent's access to PATH."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
-    mount = next((m for m in agent.mounts if m.target == str(target)), None)
+    mount = next(
+        (
+            m
+            for m in agent.mounts
+            if m.source == source_or_target or m.target == source_or_target
+        ),
+        None,
+    )
     if mount is None:
         raise click.ClickException(
-            f"agent {style(user_name, fg='yellow')} has no recorded access with target {style(target, fg='yellow')}"
+            f"agent {style(user_name, fg='yellow')} has no recorded access with source or target {style(source_or_target, fg='yellow')}"
         )
 
     agent.mounts.remove(mount)
