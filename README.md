@@ -1,15 +1,15 @@
-# AaAU² (aka Agent As Another Unix User)
+# A⁴U² (aka AI Agent As Another Unix User)
 
 A barebone sandbox for agentic coding based on UNIX users.
 
-Instead of containers or VMs, `au` creates a dedicated UNIX user for your AI coding agent
+Instead of containers or VMs, `auu` creates a dedicated UNIX user for your AI coding agent
 and uses a setuid wrapper to run commands as that user.
 This gives you filesystem-level isolation with minimal overhead — the agent runs on the
 same host, but under a separate UID with controlled access.
 
 ## How it works
 
-When you create an agent, `au` will:
+When you create an agent, `auu` will:
 
 1. Create a UNIX user (e.g. `agent`) and a group (`su-as-agent`)
 2. Add your user to the group so you can interact with the agent's files
@@ -28,21 +28,21 @@ The entrypoint binary is the key piece: it calls `setresuid`/`setresgid` to *per
 ## Installation
 
 ```bash
-pipx install agent-as-another-unix-user
+pipx install agent-as-unix-user
 # or with uv
-uv tool install agent-as-another-unix-user
+uv tool install agent-as-unix-user
 ```
 
-This installs the `au` command.
+This installs the `auu` command.
 
 ## Usage
 
 ### Create a new agent
 
 ```bash
-au new                    # creates an agent named "agent" (default)
-au new --agent agentA     # custom agent name
-au new --yes              # skip confirmation prompt
+auu new                    # creates an agent named "agent" (default)
+auu new --agent agentA     # custom agent name
+auu new --yes              # skip confirmation prompt
 ```
 
 Requires root/sudo. Creates the UNIX user, group, home directory (with setgid + ACL), compiles the setuid entrypoint, and updates the config file.
@@ -50,18 +50,18 @@ Requires root/sudo. Creates the UNIX user, group, home directory (with setgid + 
 ### Run a command as the agent
 
 ```bash
-au run echo hello                    # run as default agent "agent"
-au run --agent agentA -- code        # run as a specific agent
-au run --env API_KEY=xxx -- cmd      # pass environment variables
+auu run echo hello                    # run as default agent "agent"
+auu run --agent agentA -- code        # run as a specific agent
+auu run --env API_KEY=xxx -- cmd      # pass environment variables
 ```
 
-Before executing, `au run` verifies the entrypoint binary hasn't been modified by comparing its SHA-256 hash against the stored fingerprint. Environment is scrubbed by default — only `LANG` and `TERM` are kept, plus any variables passed explicitly via `--env`.
+Before executing, `auu run` verifies the entrypoint binary hasn't been modified by comparing its SHA-256 hash against the stored fingerprint. Environment is scrubbed by default — only `LANG` and `TERM` are kept, plus any variables passed explicitly via `--env`.
 
 ### Show agent info & health
 
 ```bash
-au info                   # info for default agent "agent"
-au info --agent agentA    # info for a specific agent
+auu info                   # info for default agent "agent"
+auu info --agent agentA    # info for a specific agent
 ```
 
 Displays the agent's home directory, group, entrypoint path, ACL external accesses, and runs a healthcheck that verifies:
@@ -76,7 +76,7 @@ Displays the agent's home directory, group, entrypoint path, ACL external access
 ### List agents
 
 ```bash
-au list
+auu list
 ```
 
 Lists all agents present in the configuration file.
@@ -84,10 +84,10 @@ Lists all agents present in the configuration file.
 ### Delete an agent
 
 ```bash
-au delete                        # delete default agent "agent"
-au delete --agent agentA         # delete a specific agent
-au delete --delete-home          # also remove the home directory
-au delete --yes                  # skip confirmation prompt
+auu delete                        # delete default agent "agent"
+auu delete --agent agentA         # delete a specific agent
+auu delete --delete-home          # also remove the home directory
+auu delete --yes                  # skip confirmation prompt
 ```
 
 Requires root/sudo. Removes the UNIX user, group, and optionally the home directory. Resilient to partial state — if some resources are already gone, it skips them and continues.
@@ -104,5 +104,5 @@ Requires root/sudo. Removes the UNIX user, group, and optionally the home direct
 
 - **UID isolation**: the agent runs as a separate UNIX user — it cannot read your home directory or other users' files (assuming standard permissions).
 - **Permanent privilege drop**: the setuid entrypoint uses `setresuid`/`setresgid` to permanently become the agent user and .
-- **Environment scrubbing**: `au run` only pass `LANG` and `TERM` environ variables to the agent user (use `--env` to manually pass additional environ variables).
+- **Environment scrubbing**: `auu run` only pass `LANG` and `TERM` environ variables to the agent user (use `--env` to manually pass additional environ variables).
 - **Shared filesystem via ACL**: the agent's home uses setgid + default ACLs on the group so both the human and the agent can read/write files without ownership conflicts.

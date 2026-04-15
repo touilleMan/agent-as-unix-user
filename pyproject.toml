@@ -1,5 +1,5 @@
 [project]
-name = "agent-as-another-unix-user"
+name = "agent-as-unix-user"
 version = "0.1.0"
 description = "A barebone sandbox for agentic coding based on UNIX user"
 readme = "README.md"
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-au = "agent_as_another_unix_user:main"
+auu = "agent_as_unix_user:main"
 
 [build-system]
 requires = ["uv_build>=0.11.3,<0.12.0"]
