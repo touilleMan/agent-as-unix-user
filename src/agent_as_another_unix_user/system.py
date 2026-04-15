@@ -438,6 +438,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (chdir(agent_home) != 0) {
+        perror("chdir(agent_home)");
+        return 1;
+    }
+
     execvp(argv[cmd_start], &argv[cmd_start]);
     perror("execv");
     return 1;
