@@ -27,6 +27,8 @@ class MountConfig:
     "Absolute path on the human's side (e.g. /home/alice/foo/bar)"
     target: str
     "Absolute path on the agent's side (e.g. /home/agent/foo/bar)"
+    read_only: bool = True
+    "If True the mount is read-only; if False the agent can write to it."
 
 
 @dataclass(slots=True)
@@ -53,12 +55,7 @@ class AgentConfig:
     Might be `False` if new agent command couldn't finish...
     """
     mounts: list[MountConfig]
-    """
-    Read-only bind mounts to set up when running as the agent.
-
-    The entrypoint creates these bind mounts inside a private mount
-    namespace so they are automatically cleaned up when the process exits.
-    """
+    "Bind mounts to set up when running as the agent"
 
 
 @dataclass(slots=True)
@@ -108,7 +105,7 @@ class Config:
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
                     f"bootstrapped = {json.dumps(agent.bootstrapped)}",
                     *(
-                        f"[[agents.mounts]]\nsource = {json.dumps(m.source)}\ntarget = {json.dumps(m.target)}"
+                        f"[[agents.mounts]]\nsource = {json.dumps(m.source)}\ntarget = {json.dumps(m.target)}\nread_only = {json.dumps(m.read_only)}"
                         for m in agent.mounts
                     ),
                     "",
@@ -167,6 +164,7 @@ class Config:
                             MountConfig(
                                 source=str(m["source"]),
                                 target=str(m["target"]),
+                                read_only=bool(m.get("read_only", True)),
                             )
                             for m in item.get("mounts", [])
                         ],

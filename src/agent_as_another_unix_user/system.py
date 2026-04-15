@@ -220,6 +220,7 @@ ENTRYPOINT_SRC_MAIN_C = """
 struct mount_entry {
     const char *source;
     const char *target;
+    int read_only;
 };
 
 static int path_starts_with(const char *path, const char *prefix) {
@@ -255,7 +256,7 @@ static int mkdir_p(const char *path, mode_t mode, uid_t uid, gid_t gid) {
 }
 
 int main(int argc, char **argv) {
-    // Parse arguments: [--mount source target]... -- command [args...]
+    // Parse arguments
     struct mount_entry mounts[MAX_MOUNTS];
     int mount_count = 0;
     int cmd_start = -1;
@@ -265,9 +266,10 @@ int main(int argc, char **argv) {
             cmd_start = i + 1;
             break;
         }
-        if (strcmp(argv[i], "--mount") == 0) {
+        if (strcmp(argv[i], "--mount-ro") == 0 || strcmp(argv[i], "--mount-rw") == 0) {
+            int is_ro = (strcmp(argv[i], "--mount-ro") == 0);
             if (i + 2 >= argc) {
-                fprintf(stderr, "ERROR: --mount requires two arguments (source and target)\\n");
+                fprintf(stderr, "ERROR: %s requires two arguments (source and target)\\n", argv[i]);
                 return 2;
             }
             if (mount_count >= MAX_MOUNTS) {
@@ -276,6 +278,7 @@ int main(int argc, char **argv) {
             }
             mounts[mount_count].source = argv[i + 1];
             mounts[mount_count].target = argv[i + 2];
+            mounts[mount_count].read_only = is_ro;
             mount_count++;
             i += 2;
         } else {
@@ -285,7 +288,7 @@ int main(int argc, char **argv) {
     }
 
     if (cmd_start < 0 || cmd_start >= argc) {
-        fprintf(stderr, "usage: %s [--mount source target]... -- <command> [args...]\\n", argv[0]);
+        fprintf(stderr, "usage: %s [--mount-ro source target] [--mount-rw source target]... -- <command> [args...]\\n", argv[0]);
         return 2;
     }
 
@@ -384,17 +387,19 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // Bind mount (read-write initially, then remount read-only)
+        // Bind mount (read-write initially, then remount read-only if requested)
         if (mount(real_source, mounts[i].target, NULL, MS_BIND, NULL) != 0) {
             fprintf(stderr, "ERROR: bind mount %s -> %s failed: %s\\n",
                     real_source, mounts[i].target, strerror(errno));
             return 1;
         }
-        if (mount(NULL, mounts[i].target, NULL,
-                  MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) != 0) {
-            fprintf(stderr, "ERROR: remount read-only %s failed: %s\\n",
-                    mounts[i].target, strerror(errno));
-            return 1;
+        if (mounts[i].read_only) {
+            if (mount(NULL, mounts[i].target, NULL,
+                      MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) != 0) {
+                fprintf(stderr, "ERROR: remount read-only %s failed: %s\\n",
+                        mounts[i].target, strerror(errno));
+                return 1;
+            }
         }
     }
 

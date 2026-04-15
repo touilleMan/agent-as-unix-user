@@ -17,15 +17,22 @@ def access_group() -> None:
 
 @access_group.command("add")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
+@click.option(
+    "--rw",
+    "read_write",
+    is_flag=True,
+    default=False,
+    help="Mount read-write instead of read-only.",
+)
 @click.argument(
     "source", type=click.Path(exists=True, resolve_path=True, path_type=Path)
 )
 @click.argument("target", required=False, default=None, type=Path)
 @click.pass_obj
 def access_add(
-    state: AppState, user_name: str, source: Path, target: Path | None
+    state: AppState, user_name: str, read_write: bool, source: Path, target: Path | None
 ) -> None:
-    """Give the agent read-only access to PATH via a bind mount."""
+    """Give the agent access to PATH via a bind mount"""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
@@ -59,13 +66,15 @@ def access_add(
             f"the agent directory {style(str(agent_home), fg='yellow')}"
         )
 
-    mount = MountConfig(source=str(source), target=str(target))
+    read_only = not read_write
+    mount = MountConfig(source=str(source), target=str(target), read_only=read_only)
     agent.mounts.append(mount)
     state.config.upsert_agent(agent)
     state.config.save()
 
+    mode = "read-only" if read_only else "read-write"
     echo(
-        f"Granted {style(user_name, fg='green')} read-only access to "
+        f"Granted {style(user_name, fg='green')} {mode} access to "
         f"{style(source, fg='yellow')} (mounted at {style(target, fg='yellow')})"
     )
 
@@ -115,4 +124,5 @@ def access_list(state: AppState, user_name: str) -> None:
         echo(f"No access path configured for agent {style(user_name, fg='green')}.")
     else:
         for mount in agent.mounts:
-            echo(f"{mount.source} -> {mount.target}")
+            mode = "ro" if mount.read_only else "rw"
+            echo(f"{mount.source} -> {mount.target} [{mode}]")

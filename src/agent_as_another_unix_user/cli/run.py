@@ -89,7 +89,8 @@ def run_as_agent(
 
     mount_args: list[str] = []
     for m in agent.mounts:
-        mount_args.extend(["--mount", m.source, m.target])
+        flag = "--mount-ro" if m.read_only else "--mount-rw"
+        mount_args.extend([flag, m.source, m.target])
 
     result = state.runner.run(
         [
