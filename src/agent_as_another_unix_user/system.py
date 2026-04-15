@@ -116,26 +116,6 @@ def _has_setgid(path: Path) -> bool:
     return bool(mode & 0o2000)
 
 
-def _human_home_has_acl_execute(runner: CommandRunner, user_name: str) -> bool:
-    """Check if the human's home directory has an ACL execute entry for *user_name*."""
-    human_home = Path.home()
-    result = runner.run(
-        ["getfacl", "--absolute-names", str(human_home)],
-        capture_output=True,
-        text=True,
-        check=False,
-        quiet=True,
-    )
-    if result.returncode != 0:
-        return False
-    assert isinstance(result.stdout, str)
-    for line in result.stdout.splitlines():
-        # e.g. "user:agent:--x"
-        if line.strip() == f"user:{user_name}:--x":
-            return True
-    return False
-
-
 def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckResult:
     errors: list[str] = []
     home = resolve_agent_home(agent.user_name)
@@ -173,12 +153,6 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
 
     if not acl_supported(runner):
         errors.append("ACL is not supported on this system")
-
-    if not _human_home_has_acl_execute(runner, agent.user_name):
-        errors.append(
-            f"human home directory missing ACL execute for {agent.user_name} "
-            f"(expected user:{agent.user_name}:--x on {Path.home()})"
-        )
 
     if user_ok and not user_info.get("home"):
         errors.append("user account has no home directory configured")
@@ -218,11 +192,17 @@ That command will remove the UNIX user, group, home directory and all data.
 
 
 ENTRYPOINT_SRC_MAIN_C = """
-#define _GNU_SOURCE  // Needed for setresgid/setresuid
+#define _GNU_SOURCE  // Needed for setresgid/setresuid, unshare
 #include <errno.h>
 #include <grp.h>
+#include <linux/limits.h>
+#include <pwd.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #ifndef TARGET_UID
@@ -235,19 +215,108 @@ ENTRYPOINT_SRC_MAIN_C = """
 #error TARGET_GID is not defined (compiling without the Makefile ?)
 #endif
 
+#define MAX_MOUNTS 64
+
+struct mount_entry {
+    const char *source;
+    const char *target;
+};
+
+static int path_starts_with(const char *path, const char *prefix) {
+    size_t len = strlen(prefix);
+    if (strncmp(path, prefix, len) != 0)
+        return 0;
+    return path[len] == '\\0' || path[len] == '/';
+}
+
+static int mkdir_p(const char *path, mode_t mode, uid_t uid, gid_t gid) {
+    char tmp[PATH_MAX];
+    size_t len = strlen(path);
+    if (len >= sizeof(tmp)) { errno = ENAMETOOLONG; return -1; }
+    memcpy(tmp, path, len + 1);
+    if (len > 0 && tmp[len - 1] == '/') tmp[--len] = '\\0';
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\\0';
+            if (mkdir(tmp, mode) == 0) {
+                if (chown(tmp, uid, gid) != 0) return -1;
+            } else if (errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+    if (mkdir(tmp, mode) == 0) {
+        if (chown(tmp, uid, gid) != 0) return -1;
+    } else if (errno != EEXIST) {
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <command> [args...]\\n", argv[0]);
+    // Parse arguments: [--mount source target]... -- command [args...]
+    struct mount_entry mounts[MAX_MOUNTS];
+    int mount_count = 0;
+    int cmd_start = -1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--") == 0) {
+            cmd_start = i + 1;
+            break;
+        }
+        if (strcmp(argv[i], "--mount") == 0) {
+            if (i + 2 >= argc) {
+                fprintf(stderr, "ERROR: --mount requires two arguments (source and target)\\n");
+                return 2;
+            }
+            if (mount_count >= MAX_MOUNTS) {
+                fprintf(stderr, "ERROR: too many mounts (max %d)\\n", MAX_MOUNTS);
+                return 2;
+            }
+            mounts[mount_count].source = argv[i + 1];
+            mounts[mount_count].target = argv[i + 2];
+            mount_count++;
+            i += 2;
+        } else {
+            fprintf(stderr, "ERROR: unexpected argument before '--': %s\\n", argv[i]);
+            return 2;
+        }
+    }
+
+    if (cmd_start < 0 || cmd_start >= argc) {
+        fprintf(stderr, "usage: %s [--mount source target]... -- <command> [args...]\\n", argv[0]);
         return 2;
     }
 
     // Sanity check to ensure the caller hasn't forget to scrub his environ variable before calling us
     if (getenv("USER") != NULL) {
-        fprintf(stderr, "ERROR: environ variables haven't been scrub — aborting!\\n");
+        fprintf(stderr, "ERROR: environ variables haven't been scrub, aborting!\\n");
         return 1;
     }
 
     uid_t original_uid = getuid();
+
+    // Resolve caller's and agent's home directories for mount validation
+    struct passwd *caller_pw = getpwuid(original_uid);
+    if (!caller_pw || !caller_pw->pw_dir) {
+        fprintf(stderr, "ERROR: cannot determine caller's home directory\\n");
+        return 1;
+    }
+    // Note `getpwuid` returned pointer shouldn't be freed, however its content
+    // might get overwritten by a subsequent `getpwuid` call.
+    char caller_home[PATH_MAX];
+    snprintf(caller_home, sizeof(caller_home), "%s", caller_pw->pw_dir);
+
+    struct passwd *agent_pw = getpwuid(TARGET_UID);
+    if (!agent_pw || !agent_pw->pw_dir) {
+        fprintf(stderr, "ERROR: cannot determine agent's home directory\\n");
+        return 1;
+    }
+    char agent_home[PATH_MAX];
+    snprintf(agent_home, sizeof(agent_home), "%s", agent_pw->pw_dir);
+
+    // ------------- BECOMING ROOT --------------------
 
     // The binary is setuid-root, so euid is 0.
     // First, become fully root so we can manipulate groups and identities.
@@ -255,6 +324,81 @@ int main(int argc, char **argv) {
         perror("setuid(0)");
         return 1;
     }
+
+    // Create a private mount namespace so bind mounts are automatically
+    // cleaned up when the process tree exits.
+    if (mount_count > 0) {
+        if (unshare(CLONE_NEWNS) != 0) {
+            perror("unshare(CLONE_NEWNS)");
+            return 1;
+        }
+        // Make all existing mounts private so nothing leaks out
+        if (mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
+            perror("mount(MS_REC | MS_PRIVATE)");
+            return 1;
+        }
+    }
+
+    // Validate and perform bind mounts
+    for (int i = 0; i < mount_count; i++) {
+        // Resolve source to realpath
+        char real_source[PATH_MAX];
+        if (!realpath(mounts[i].source, real_source)) {
+            fprintf(stderr, "ERROR: cannot resolve mount source: %s: %s\\n",
+                    mounts[i].source, strerror(errno));
+            return 1;
+        }
+
+        // Security check: source must be under the caller's home
+        if (!path_starts_with(real_source, caller_home)) {
+            fprintf(stderr, "ERROR: mount source %s is not under caller's home %s\\n",
+                    real_source, caller_home);
+            return 1;
+        }
+
+        // Security check: source must be owned by the caller
+        struct stat src_stat;
+        if (stat(real_source, &src_stat) != 0) {
+            fprintf(stderr, "ERROR: cannot stat mount source %s: %s\\n",
+                    real_source, strerror(errno));
+            return 1;
+        }
+        if (src_stat.st_uid != original_uid) {
+            fprintf(stderr, "ERROR: mount source %s is not owned by caller "
+                    "(uid %d, expected %d)\\n",
+                    real_source, src_stat.st_uid, original_uid);
+            return 1;
+        }
+
+        // Security check: target must be under the agent's home
+        if (!path_starts_with(mounts[i].target, agent_home)) {
+            fprintf(stderr, "ERROR: mount target %s is not under agent's home %s\\n",
+                    mounts[i].target, agent_home);
+            return 1;
+        }
+
+        // Create the target directory
+        if (mkdir_p(mounts[i].target, 0755, TARGET_UID, TARGET_GID) != 0) {
+            fprintf(stderr, "ERROR: cannot create mount target %s: %s\\n",
+                    mounts[i].target, strerror(errno));
+            return 1;
+        }
+
+        // Bind mount (read-write initially, then remount read-only)
+        if (mount(real_source, mounts[i].target, NULL, MS_BIND, NULL) != 0) {
+            fprintf(stderr, "ERROR: bind mount %s -> %s failed: %s\\n",
+                    real_source, mounts[i].target, strerror(errno));
+            return 1;
+        }
+        if (mount(NULL, mounts[i].target, NULL,
+                  MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) != 0) {
+            fprintf(stderr, "ERROR: remount read-only %s failed: %s\\n",
+                    mounts[i].target, strerror(errno));
+            return 1;
+        }
+    }
+
+    // ------------- LEAVING ROOT, BECOMING AGENT --------------------
 
     // Drop all supplementary groups inherited from the calling user
     // This command requires to be root since removing a group can
@@ -289,7 +433,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    execvp(argv[1], &argv[1]);
+    execvp(argv[cmd_start], &argv[cmd_start]);
     perror("execv");
     return 1;
 }

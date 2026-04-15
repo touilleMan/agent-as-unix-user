@@ -57,7 +57,7 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         entrypoint=str(entrypoint),
         entrypoint_sha256="<unknown>",
         bootstrapped=False,
-        acl_external_accesses=[],
+        mounts=[],
     )
     state.config.upsert_agent(agent_config)
     state.config.save()
@@ -115,14 +115,6 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
             f"default:group:{su_as_agent_group}:rwx",
             str(home),
         ]
-    )
-
-    # Grant the agent user execute (traverse) permission on the human's home
-    # directory via ACL. This allows the agent to resolve symlinks pointing
-    # into the human's home without being able to list its contents.
-    human_home = Path.home()
-    state.runner.run(
-        ["sudo", "setfacl", "--modify", f"user:{user_name}:--x", str(human_home)]
     )
 
     # Since the UNIX group has just been created, our current session doesn't

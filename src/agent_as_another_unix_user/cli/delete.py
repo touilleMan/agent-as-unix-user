@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from click import echo, style
 import click
 
@@ -90,20 +88,6 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
     state.config.upsert_agent(agent)
     state.config.save()
 
-    # Remove symlinks created for external accesses
-    human_home = Path.home()
-    if agent_home is not None:
-        for access_path in agent.acl_external_accesses:
-            try:
-                relative = Path(access_path).relative_to(human_home)
-                symlink_path = agent_home / relative
-                state.runner.run(
-                    ["sudo", "-u", user_name, "rm", "-f", str(symlink_path)],
-                    check=False,
-                )
-            except ValueError:
-                pass
-
     if delete_user:
         state.runner.run(["sudo", "userdel", agent.user_name], check=False)
     if delete_group:
@@ -111,12 +95,6 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
 
     if agent_home_to_delete:
         state.runner.run(["sudo", "rm", "-rf", str(agent_home_to_delete)], check=False)
-
-    # Remove ACL traverse permission on the human's home
-    state.runner.run(
-        ["sudo", "setfacl", "--remove", f"user:{user_name}", str(human_home)],
-        check=False,
-    )
 
     state.config.remove_agent(user_name)
     state.config.save()

@@ -87,6 +87,10 @@ def run_as_agent(
             f"got {style(entrypoint_sha256, fg='red')}"
         )
 
+    mount_args: list[str] = []
+    for m in agent.mounts:
+        mount_args.extend(["--mount", m.source, m.target])
+
     result = state.runner.run(
         [
             # If the agent user has just been created, we should re-login
@@ -98,7 +102,7 @@ def run_as_agent(
             "-",
             agent.su_as_agent_group,
             "-c",
-            shlex.join([agent.entrypoint, *command]),
+            shlex.join([agent.entrypoint, *mount_args, "--", *command]),
         ],
         check=False,
         capture_output=False,

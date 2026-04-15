@@ -22,6 +22,14 @@ def default_config_path() -> Path:
 
 
 @dataclass(slots=True)
+class MountConfig:
+    source: str
+    "Absolute path on the human's side (e.g. /home/alice/foo/bar)"
+    target: str
+    "Absolute path on the agent's side (e.g. /home/agent/foo/bar)"
+
+
+@dataclass(slots=True)
 class AgentConfig:
     user_name: str
     "UNIX user name"
@@ -44,17 +52,12 @@ class AgentConfig:
 
     Might be `False` if new agent command couldn't finish...
     """
-    acl_external_accesses: list[str]
+    mounts: list[MountConfig]
     """
-    Paths inside the human's home directory that the agent has been given
-    access to via symlinks in the agent's home.
+    Read-only bind mounts to set up when running as the agent.
 
-    Each entry is the resolved absolute path of the original target (e.g.
-    ``/home/emmanuel/foo/bar``).  A corresponding symlink exists in the
-    agent's home at the same relative location (e.g. ``/home/agent/foo/bar``
-    pointing to ``/home/emmanuel/foo/bar``).
-
-    Removing an access simply means deleting the symlink.
+    The entrypoint creates these bind mounts inside a private mount
+    namespace so they are automatically cleaned up when the process exits.
     """
 
 
@@ -88,6 +91,10 @@ class Config:
     def to_toml(self) -> str:
         lines: list[str] = []
         for agent in self.agents:
+            mounts_toml = ", ".join(
+                f"{{ source = {json.dumps(m.source)}, target = {json.dumps(m.target)} }}"
+                for m in agent.mounts
+            )
             lines.extend(
                 [
                     "[[agents]]",
@@ -96,7 +103,7 @@ class Config:
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
                     f"bootstrapped = {json.dumps(agent.bootstrapped)}",
-                    f"acl_external_accesses = {json.dumps(agent.acl_external_accesses)}",
+                    f"mounts = [{mounts_toml}]",
                     "",
                 ]
             )
@@ -149,8 +156,12 @@ class Config:
                         entrypoint=str(item["entrypoint"]),
                         entrypoint_sha256=str(item["entrypoint_sha256"]),
                         bootstrapped=bool(item["bootstrapped"]),
-                        acl_external_accesses=[
-                            str(a) for a in item.get("acl_external_accesses", [])
+                        mounts=[
+                            MountConfig(
+                                source=str(m["source"]),
+                                target=str(m["target"]),
+                            )
+                            for m in item.get("mounts", [])
                         ],
                     )
                     for item in data.get("agents", [])

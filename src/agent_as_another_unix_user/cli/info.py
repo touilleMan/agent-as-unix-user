@@ -23,12 +23,14 @@ def info(state: AppState, user_name: str) -> None:
     echo(f"  home: {style(health.home, fg='yellow')}")
     echo(f"  group: {style(agent.su_as_agent_group, fg='yellow')}")
     echo(f"  entrypoint: {style(agent.entrypoint, fg='yellow')}")
-    if agent.acl_external_accesses:
-        echo("  external accesses:")
-        for access in agent.acl_external_accesses:
-            echo(f"    - {style(access, fg='yellow')}")
+    if agent.mounts:
+        echo("  mounts:")
+        for mount in agent.mounts:
+            echo(
+                f"    - {style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
+            )
     else:
-        echo("  external accesses: none")
+        echo("  mounts: none")
     if health.errors:
         echo(style("  issues:", fg="red"))
         for reason in health.errors:
