@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import stat
 
+from click import echo, style
 import click
 
 from ..version import __version__
@@ -46,8 +48,24 @@ def cli(ctx: click.Context, config_path: Path) -> None:
         is_root=(os.geteuid() == 0),
     )
 
-    # TODO: Sanity check to ensure the home directory doesn't give access to
-    #       other users (e.g. mode 750 or 700).
+    if not ctx.obj.config.disable_home_access_check:
+        _check_home_permissions()
+
+
+def _check_home_permissions() -> None:
+    home = Path.home()
+    try:
+        mode = home.stat().st_mode
+    except OSError:
+        return
+    if mode & stat.S_IROTH or mode & stat.S_IWOTH or mode & stat.S_IXOTH:
+        echo(
+            f"{ style("WARNING: ", fg="red", bold=True) } "
+            f"{style(str(home), fg='yellow')} has mode { style(oct(stat.S_IMODE(mode)), bold=True) }, "
+            f"consider running { style(f"chmod 750 {home}", bold=True) } to restrict access. "
+            f"(Disable this check with { style("disable_home_access_check = true", bold=True) } in your config)",
+            err=True,
+        )
 
 
 # Import does a side effect that register the sub command in `cli`

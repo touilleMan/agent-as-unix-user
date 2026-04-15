@@ -65,6 +65,7 @@ class AgentConfig:
 class Config:
     path: Path
     agents: list[AgentConfig] = field(default_factory=list)
+    disable_home_access_check: bool = False
     _fh: TextIO | None = field(default=None, repr=False, compare=False)
     _dirty: bool = field(default=False, repr=False, compare=False)
 
@@ -90,6 +91,13 @@ class Config:
 
     def to_toml(self) -> str:
         lines: list[str] = []
+        if self.disable_home_access_check:
+            lines.extend(
+                [
+                    f"disable_home_access_check = {json.dumps(self.disable_home_access_check)}",
+                    "",
+                ]
+            )
         for agent in self.agents:
             mounts_toml = ", ".join(
                 f"{{ source = {json.dumps(m.source)}, target = {json.dumps(m.target)} }}"
@@ -169,7 +177,8 @@ class Config:
             else:
                 agents = []
 
-            config = cls(path=path, agents=agents, _fh=fh)
+            disable_home_access_check = bool(data.get("disable_home_access_check", False)) if raw else False
+            config = cls(path=path, agents=agents, disable_home_access_check=disable_home_access_check, _fh=fh)
             try:
                 yield config
                 if config._dirty:

@@ -20,33 +20,44 @@ def access_group() -> None:
 @click.argument(
     "source", type=click.Path(exists=True, resolve_path=True, path_type=Path)
 )
+@click.argument("target", required=False, default=None, type=Path)
 @click.pass_obj
-def access_add(state: AppState, user_name: str, source: Path) -> None:
+def access_add(state: AppState, user_name: str, source: Path, target: Path | None) -> None:
     """Give the agent read-only access to PATH via a bind mount."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
-    # Sanity check: target must be inside the human's home directory
     human_home = Path.home()
-    try:
-        source.relative_to(human_home)
-    except ValueError:
-        raise click.ClickException(
-            f"target {style(source, fg='yellow')} is not inside "
-            f"your home directory {style(str(human_home), fg='yellow')}"
-        )
-    path_relative_to_human_home = source.relative_to(human_home)
-
-    # Compute the target path in the agent's home
     agent_home = resolve_agent_home(agent.user_name)
     if not agent_home:
         raise click.ClickException(
             f"{style('~' + agent.user_name, fg='yellow')} doesn't exist"
         )
-    target = str(agent_home / path_relative_to_human_home)
 
-    mount = MountConfig(source=str(source), target=target)
+    # Security check: source must be inside the human's home directory
+    try:
+        source_relative_to_human_home = source.relative_to(human_home)
+    except ValueError:
+        raise click.ClickException(
+            f"source {style(source, fg='yellow')} is not inside "
+            f"your home directory {style(str(human_home), fg='yellow')}"
+        )
+
+    if target is None:
+        # Compute the target path in the agent's home
+        target = agent_home / source_relative_to_human_home
+
+    # Security check: target must be inside the agent's home directory
+    try:
+        target.relative_to(agent_home)
+    except ValueError:
+        raise click.ClickException(
+            f"target {style(target, fg='yellow')} is not inside "
+            f"the agent directory {style(str(agent_home), fg='yellow')}"
+        )
+
+    mount = MountConfig(source=str(source), target=str(target))
     agent.mounts.append(mount)
     state.config.upsert_agent(agent)
     state.config.save()
@@ -59,19 +70,18 @@ def access_add(state: AppState, user_name: str, source: Path) -> None:
 
 @access_group.command("remove")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
-@click.argument("path", type=click.Path(resolve_path=True, path_type=Path))
+@click.argument("target", type=Path)
 @click.pass_obj
-def access_remove(state: AppState, user_name: str, path: Path) -> None:
+def access_remove(state: AppState, user_name: str, target: Path) -> None:
     """Revoke the agent's access to PATH."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
-    resolved = str(path)
-    mount = next((m for m in agent.mounts if m.source == resolved), None)
+    mount = next((m for m in agent.mounts if m.target == str(target)), None)
     if mount is None:
         raise click.ClickException(
-            f"agent {style(user_name, fg='yellow')} has no recorded access to {style(resolved, fg='yellow')}"
+            f"agent {style(user_name, fg='yellow')} has no recorded access with target {style(target, fg='yellow')}"
         )
 
     agent.mounts.remove(mount)
@@ -79,7 +89,7 @@ def access_remove(state: AppState, user_name: str, path: Path) -> None:
     state.config.save()
 
     echo(
-        f"Revoked {style(user_name, fg='green')} access to {style(resolved, fg='yellow')}"
+        f"Revoked {style(user_name, fg='green')} access {style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
     )
 
 
