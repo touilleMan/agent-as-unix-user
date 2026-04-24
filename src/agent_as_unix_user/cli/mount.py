@@ -10,12 +10,12 @@ from ..system import resolve_agent_home
 from . import AppState, cli
 
 
-@cli.group("access")
-def access_group() -> None:
+@cli.group("mount")
+def mount_group() -> None:
     """Manage external path accesses for an agent via bind mounts."""
 
 
-@access_group.command("add")
+@mount_group.command("add")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.option(
     "--rw",
@@ -29,10 +29,10 @@ def access_group() -> None:
 )
 @click.argument("target", required=False, default=None, type=Path)
 @click.pass_obj
-def access_add(
+def mount_add(
     state: AppState, user_name: str, read_write: bool, source: Path, target: Path | None
 ) -> None:
-    """Give the agent access to PATH via a bind mount"""
+    """Give the agent access to an external path via a bind mount"""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
@@ -74,17 +74,17 @@ def access_add(
 
     mode = "read-only" if read_only else "read-write"
     echo(
-        f"Granted {style(user_name, fg='green')} {mode} access to "
+        f"Added {style(user_name, fg='green')} {mode} access to "
         f"{style(source, fg='yellow')} (mounted at {style(target, fg='yellow')})"
     )
 
 
-@access_group.command("remove")
+@mount_group.command("remove")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.argument("source_or_target")
 @click.pass_obj
-def access_remove(state: AppState, user_name: str, source_or_target: str) -> None:
-    """Revoke the agent's access to PATH."""
+def mount_remove(state: AppState, user_name: str, source_or_target: str) -> None:
+    """Remove an access bind mount for a given agent."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
@@ -99,7 +99,7 @@ def access_remove(state: AppState, user_name: str, source_or_target: str) -> Non
     )
     if mount is None:
         raise click.ClickException(
-            f"agent {style(user_name, fg='yellow')} has no recorded access with source or target {style(source_or_target, fg='yellow')}"
+            f"agent {style(user_name, fg='yellow')} has no recorded access bind mount with source or target {style(source_or_target, fg='yellow')}"
         )
 
     agent.mounts.remove(mount)
@@ -107,21 +107,21 @@ def access_remove(state: AppState, user_name: str, source_or_target: str) -> Non
     state.config.save()
 
     echo(
-        f"Revoked {style(user_name, fg='green')} access {style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
+        f"Removed {style(user_name, fg='green')} access bind mount {style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
     )
 
 
-@access_group.command("list")
+@mount_group.command("list")
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.pass_obj
-def access_list(state: AppState, user_name: str) -> None:
-    """List all existing access for a given agent."""
+def mount_list(state: AppState, user_name: str) -> None:
+    """List all existing access bind mounts for a given agent."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
     if not agent.mounts:
-        echo(f"No access path configured for agent {style(user_name, fg='green')}.")
+        echo(f"No access bind mount configured for agent {style(user_name, fg='green')}.")
     else:
         for mount in agent.mounts:
             mode = "ro" if mount.read_only else "rw"
