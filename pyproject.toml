@@ -1,6 +1,6 @@
 [project]
 name = "agent-as-unix-user"
-version = "1.0.0"
+version = "1.0.1"
 description = "A barebone sandbox for agentic coding based on UNIX user"
 readme = "README.md"
 authors = [
