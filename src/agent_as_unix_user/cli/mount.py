@@ -6,8 +6,63 @@ import click
 from click import echo, style
 
 from ..config import MountConfig
-from ..system import resolve_agent_home
+from ..system import acl_supported, resolve_agent_home
 from . import AppState, cli
+
+
+def _apply_source_acl(state: AppState, source: Path, su_as_agent_group: str) -> None:
+    """Configure ACL + setgid on *source* so both human and agent can modify files."""
+    # setgid ensures new files/dirs inherit the group
+    state.runner.run(["sudo", "chmod", "g+s", str(source)])
+    # Default ACL ensures the group always has rwx on newly created entries
+    state.runner.run(
+        [
+            "sudo",
+            "setfacl",
+            "--recursive",
+            "--modify",
+            f"default:group:{su_as_agent_group}:rwx",
+            str(source),
+        ]
+    )
+    # Finally modify the actual group of the existing files
+    state.runner.run(
+        [
+            "sudo",
+            "setfacl",
+            "--recursive",
+            "--modify",
+            f"group:{su_as_agent_group}:rwx",
+            str(source),
+        ]
+    )
+
+
+def _clear_source_acl(state: AppState, source: Path, su_as_agent_group: str) -> None:
+    """Remove the ACL rules previously set on *source*."""
+    state.runner.run(["sudo", "chmod", "g-s", str(source)], check=False)
+    state.runner.run(
+        [
+            "sudo",
+            "setfacl",
+            "--recursive",
+            "--remove",
+            f"default:group:{su_as_agent_group}",
+            str(source),
+        ],
+        check=False,
+    )
+    state.runner.run(
+        [
+            "sudo",
+            "setfacl",
+            "--recursive",
+            "--remove",
+            f"group:{su_as_agent_group}",
+            str(source),
+        ],
+        check=False,
+    )
 
 
 @cli.group("mount")
@@ -67,6 +122,16 @@ def mount_add(
         )
 
     read_only = not read_write
+
+    # For read-write mounts, configure ACLs on the source so both human and
+    # agent can modify each other's files.
+    if read_write:
+        if not acl_supported(state.runner):
+            raise click.ClickException(
+                "ACL support is required for read-write mounts but not available on this system"
+            )
+        _apply_source_acl(state, source, agent.su_as_agent_group)
+
     mount = MountConfig(source=str(source), target=str(target), read_only=read_only)
     agent.mounts.append(mount)
     state.config.upsert_agent(agent)
@@ -102,6 +167,10 @@ def mount_remove(state: AppState, user_name: str, source_or_target: str) -> None
             f"agent {style(user_name, fg='yellow')} has no recorded access bind mount with source or target {style(source_or_target, fg='yellow')}"
         )
 
+    # Clear ACL rules if this was a read-write mount
+    if not mount.read_only:
+        _clear_source_acl(state, Path(mount.source), agent.su_as_agent_group)
+
     agent.mounts.remove(mount)
     state.config.upsert_agent(agent)
     state.config.save()
@@ -121,7 +190,9 @@ def mount_list(state: AppState, user_name: str) -> None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
     if not agent.mounts:
-        echo(f"No access bind mount configured for agent {style(user_name, fg='green')}.")
+        echo(
+            f"No access bind mount configured for agent {style(user_name, fg='green')}."
+        )
     else:
         for mount in agent.mounts:
             mode = "ro" if mount.read_only else "rw"

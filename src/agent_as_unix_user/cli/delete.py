@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from click import echo, style
 import click
 
 from ..system import resolve_agent_home
+from .mount import _clear_source_acl
 from . import AppState, cli
 
 
@@ -81,6 +84,16 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
                     delete_home = False
                 else:
                     agent_home_to_delete = agent_home
+
+    # Remove all mount ACLs before deleting the agent
+    for mount in list(agent.mounts):
+        if not mount.read_only:
+            echo(
+                f"Clearing ACL on {style(mount.source, fg='yellow')} for mount "
+                f"{style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
+            )
+            _clear_source_acl(state, Path(mount.source), agent.su_as_agent_group)
+    agent.mounts.clear()
 
     # Actual deletion
 
