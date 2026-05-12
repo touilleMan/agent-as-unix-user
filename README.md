@@ -93,14 +93,14 @@ $ sudo chgrp su-as-agent2 /home/agent2
 $ sudo chmod 2770 /home/agent2
 $ sudo setfacl --modify default:group:su-as-agent2:rwx /home/agent2
 $ sg su-as-agent2 -c 'tee /home/agent2/README.md'
-$ sg su-as-agent2 -c 'mkdir -p /home/agent2/.config/agent-as-another-unix-user/su_as_agent-src'
-$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-another-unix-user/su_as_agent-src/main.c'
-$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-another-unix-user/su_as_agent-src/Makefile'
-$ sg su-as-agent2 -c 'make -C /home/agent2/.config/agent-as-another-unix-user/su_as_agent-src'
-make: Entering directory '/home/agent2/.config/agent-as-another-unix-user/su_as_agent-src'
+$ sg su-as-agent2 -c 'mkdir -p /home/agent2/.config/agent-as-unix-user/su_as_agent-src'
+$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-unix-user/su_as_agent-src/main.c'
+$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-unix-user/su_as_agent-src/Makefile'
+$ sg su-as-agent2 -c 'make -C /home/agent2/.config/agent-as-unix-user/su_as_agent-src'
+make: Entering directory '/home/agent2/.config/agent-as-unix-user/su_as_agent-src'
 cc -O2 -Wall -Wextra -Werror -DTARGET_UID=1003 -DTARGET_GID=1003 -o su_as_agent main.c
-make: Leaving directory '/home/agent2/.config/agent-as-another-unix-user/su_as_agent-src'
-$ sg su-as-agent2 -c 'mv --force /home/agent2/.config/agent-as-another-unix-user/su_as_agent-src/su_as_agent /home/agent2/su_as_agent'
+make: Leaving directory '/home/agent2/.config/agent-as-unix-user/su_as_agent-src'
+$ sg su-as-agent2 -c 'mv --force /home/agent2/.config/agent-as-unix-user/su_as_agent-src/su_as_agent /home/agent2/su_as_agent'
 $ sudo chown root:su-as-agent2 /home/agent2/su_as_agent
 $ sudo chmod 4750 /home/agent2/su_as_agent
 Created agent agent2
@@ -172,7 +172,7 @@ Requires root/sudo. Removes the UNIX user, group, and optionally the home direct
 ### Global options
 
 ```
---config, -C PATH    Config file (default: ~/.config/agent-as-another-unix-user.toml)
+--config, -C PATH    Config file (default: ~/.config/agent-as-unix-user.toml)
 --version            Show version
 -h, --help           Show help
 ```

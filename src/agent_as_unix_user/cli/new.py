@@ -11,6 +11,7 @@ from ..config import AgentConfig
 from ..system import (
     acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
+    config_dir,
     entrypoint_src_makefile,
     agent_readme_content,
     entrypoint_src_dir,
@@ -29,7 +30,7 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     config_path = state.config_path
     su_as_agent_group = expected_su_as_agent_group(user_name)
     home = expected_home(user_name, state.home_root)
-    entrypoint = home / "su_as_agent"
+    entrypoint = config_dir(home) / "su_as_agent"
     entrypoint_src = entrypoint_src_dir(home)
 
     if state.config.get_agent(user_name) is not None:

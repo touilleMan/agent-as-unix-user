@@ -168,8 +168,12 @@ def compute_sha256_fingerprint(data: bytes) -> str:
     return sha256(data).digest().hex()
 
 
+def config_dir(home: Path) -> Path:
+    return home / ".config" / "agent-as-unix-user"
+
+
 def entrypoint_src_dir(home: Path) -> Path:
-    return home / ".config" / "agent-as-another-unix-user" / "su_as_agent-src"
+    return config_dir() / "su_as_agent-src"
 
 
 def agent_readme_content(agent: AgentConfig, config_path: Path, home: Path) -> str:
@@ -181,7 +185,7 @@ Related configuration file:
 - `{config_path}`
 
 Entrypoint:
-- `{home / "su_as_agent"}`
+- `{config_dir(home) / "su_as_agent"}`
 
 Source code:
 - `{entrypoint_src_dir(home)}`

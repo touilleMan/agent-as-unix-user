@@ -13,7 +13,7 @@ from click import style
 
 from .utils import Spinner
 
-DEFAULT_CONFIG_FILENAME = "agent-as-another-unix-user.toml"
+DEFAULT_CONFIG_FILENAME = "agent-as-unix-user.toml"
 DEFAULT_GROUP_PREFIX = "su-as-"
 
 
