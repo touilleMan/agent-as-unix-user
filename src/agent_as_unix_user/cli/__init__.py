@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import grp
 import os
 import stat
 
@@ -51,8 +52,13 @@ def cli(ctx: click.Context, config_path: Path) -> None:
     if not ctx.obj.config.disable_home_access_check:
         _check_home_permissions()
 
+    _check_agent_groups(ctx.obj)
+
 
 def _check_home_permissions() -> None:
+    """
+    Check that the current user's home has a restricted access (to prevent agents from accessing it).
+    """
     home = Path.home()
     try:
         mode = home.stat().st_mode
@@ -64,6 +70,34 @@ def _check_home_permissions() -> None:
             f"{style(str(home), fg='yellow')} has mode {style(oct(stat.S_IMODE(mode)), bold=True)}, "
             f"consider running {style(f'chmod 750 {home}', bold=True)} to restrict access. "
             f"(Disable this check with {style('disable_home_access_check = true', bold=True)} in your config)",
+            err=True,
+        )
+
+
+def _check_agent_groups(app_state: AppState) -> None:
+    """
+    Check that the current user is a member of all `su_as_agent_group` groups
+    """
+    current_groups: set[str] = set()
+    for gid in os.getgroups():
+        try:
+            current_groups.add(grp.getgrgid(gid).gr_name)
+        except KeyError:
+            # Group not found for this gid, skip it
+            pass
+
+    missing_groups: list[str] = []
+    for agent in app_state.config.agents:
+        if agent.su_as_agent_group not in current_groups:
+            missing_groups.append(agent.su_as_agent_group)
+
+    if missing_groups:
+        groups_str = ", ".join(style(g, fg="yellow") for g in missing_groups)
+        echo(
+            f"{style('WARNING: ', fg='red', bold=True)} "
+            f"Current user is not a member of the following agent groups: {groups_str}. "
+            f"Your user session should be reloaded, or run {style('su - $USER', bold=True)} "
+            f"to force refreshing the groups in the current shell.",
             err=True,
         )
 
