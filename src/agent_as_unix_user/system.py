@@ -95,9 +95,9 @@ def acl_supported(runner: CommandRunner) -> bool:
     return result.returncode == 0
 
 
-def _read_default_acl(runner: CommandRunner, path: Path) -> str:
+def _read_acl(runner: CommandRunner, path: Path) -> str:
     result = runner.run(
-        ["getfacl", "-p", "-d", str(path)],
+        ["getfacl", "-p", str(path)],
         capture_output=True,
         text=True,
         check=False,
@@ -130,13 +130,14 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
     if home is None or not home.exists():
         errors.append(f"missing home directory: {home}")
     else:
-        if _has_setgid(home):
+        if not _has_setgid(home):
             errors.append("home directory missing setgid bit")
 
-        default_acl = _read_default_acl(runner, home)
-        if not default_acl:
+        acl = _read_acl(runner, home)
+        expected_default_group_acl = f"default:group:{agent.su_as_agent_group}:rwx"
+        if not acl:
             errors.append("missing default ACL configuration or ACL unsupported")
-        elif "default:" not in default_acl:
+        elif expected_default_group_acl not in acl.splitlines():
             errors.append("default ACL is not configured")
 
     entrypoint = Path(agent.entrypoint)
