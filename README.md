@@ -6,9 +6,9 @@ TL;DR:
 
 ```shell
 uv tool install agent-as-unix-user  # Install this cli
-auu new  # Create a new UNIX user for your IA agent
-auu mount add --rw ~/example # Expose `~/example` in `/home/agent/example` with read&write access
-auu run --env FOO=bar claude  # Run claude (with an environ variable) as the agent UNIX user, with only access to `/home/agent`
+au new  # Create a new UNIX user for your IA agent
+au mount add --rw ~/example # Expose `~/example` in `/home/agent/example` with read&write access
+au run --env FOO=bar claude  # Run claude (with an environ variable) as the agent UNIX user, with only access to `/home/agent`
 ```
 
 UNIX has been designed from the ground to allow multiple users to securely share a single machine (remember
@@ -83,7 +83,7 @@ When you create an agent, agent-as-unix-user will:
 Note agent-as-unix-user is designed to be as transparent as possible by only using UNIX commands and displaying them as they are run:
 
 ```bash
-$ uv run auu new -a agent2
+$ uv run au new -a agent2
 Create agent agent2 in /home/agent2 and configure group 'su-as-agent2'? [y/N]: y
 $ sudo groupadd su-as-agent2
 [sudo] password for touilleMan:
@@ -106,7 +106,7 @@ $ sudo chmod 4750 /home/agent2/su_as_agent
 Created agent agent2
 ```
 
-To run a command as an agent, `auu run my_command` will itself uses `/home/agent/su_as_agent` that:
+To run a command as an agent, `au run my_command` will itself uses `/home/agent/su_as_agent` that:
 
 - Scrubs your environ variables (only `LANG` and `TERM` are kept).
 - Drops all the groups inherited from the original user.
@@ -117,9 +117,9 @@ To run a command as an agent, `auu run my_command` will itself uses `/home/agent
 ### Create a new agent
 
 ```bash
-auu new                    # creates an agent named "agent" (default)
-auu new --agent agentA     # custom agent name
-auu new --yes              # skip confirmation prompt
+au new                    # creates an agent named "agent" (default)
+au new --agent agentA     # custom agent name
+au new --yes              # skip confirmation prompt
 ```
 
 Requires root/sudo. Creates the UNIX user, group, home directory (with setgid + ACL), compiles the setuid entrypoint, and updates the config file.
@@ -127,18 +127,18 @@ Requires root/sudo. Creates the UNIX user, group, home directory (with setgid + 
 ### Run a command as the agent
 
 ```bash
-auu run echo hello                    # run as default agent "agent"
-auu run --agent agentA -- code        # run as a specific agent
-auu run --env API_KEY=xxx -- cmd      # pass environment variables
+au run echo hello                    # run as default agent "agent"
+au run --agent agentA -- code        # run as a specific agent
+au run --env API_KEY=xxx -- cmd      # pass environment variables
 ```
 
-Before executing, `auu run` verifies the entrypoint binary hasn't been modified by comparing its SHA-256 hash against the stored fingerprint. Environment is scrubbed by default — only `LANG` and `TERM` are kept, plus any variables passed explicitly via `--env`.
+Before executing, `au run` verifies the entrypoint binary hasn't been modified by comparing its SHA-256 hash against the stored fingerprint. Environment is scrubbed by default — only `LANG` and `TERM` are kept, plus any variables passed explicitly via `--env`.
 
 ### Show agent info & health
 
 ```bash
-auu info                   # info for default agent "agent"
-auu info --agent agentA    # info for a specific agent
+au info                   # info for default agent "agent"
+au info --agent agentA    # info for a specific agent
 ```
 
 Displays the agent's home directory, group, entrypoint path, ACL external accesses, and runs a healthcheck that verifies:
@@ -153,7 +153,7 @@ Displays the agent's home directory, group, entrypoint path, ACL external access
 ### List agents
 
 ```bash
-auu list
+au list
 ```
 
 Lists all agents present in the configuration file.
@@ -161,10 +161,10 @@ Lists all agents present in the configuration file.
 ### Delete an agent
 
 ```bash
-auu delete                        # delete default agent "agent"
-auu delete --agent agentA         # delete a specific agent
-auu delete --delete-home          # also remove the home directory
-auu delete --yes                  # skip confirmation prompt
+au delete                        # delete default agent "agent"
+au delete --agent agentA         # delete a specific agent
+au delete --delete-home          # also remove the home directory
+au delete --yes                  # skip confirmation prompt
 ```
 
 Requires root/sudo. Removes the UNIX user, group, and optionally the home directory. Resilient to partial state — if some resources are already gone, it skips them and continues.
