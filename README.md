@@ -1,4 +1,4 @@
-# A⁴U², aka AI Agent As Another Unix User, aka just agent-as-unix-user
+# A⁴U²: AI Agent As Another Unix User (aka agent-as-unix-user)
 
 A barebone sandbox for agentic coding based on UNIX users.
 
@@ -7,8 +7,10 @@ TL;DR:
 ```shell
 uv tool install agent-as-unix-user  # Install this cli
 au new  # Create a new UNIX user for your IA agent
-au mount add --rw ~/example # Expose `~/example` in `/home/agent/example` with read&write access
-au run --env FOO=bar claude  # Run claude (with an environ variable) as the agent UNIX user, with only access to `/home/agent`
+au mount add --rw ~/example # Expose `~/example` in `/home/agent/example`
+                            # with read&write access
+au run --env FOO=bar claude  # Run claude (with an environ variable) as the agent UNIX user,
+                             # with only access to `/home/agent`
 ```
 
 UNIX has been designed from the ground to allow multiple users to securely share a single machine (remember
@@ -47,7 +49,7 @@ uv tool install agent-as-unix-user
 
 The great thing about this approach is its simplicity and it compatibility with the UNIX ecosystem.
 
-## Example 1: limit CPU & RAM
+### Example 1: limit CPU & RAM
 
 Limit the agent to use at most 16Go of RAM and one-and-half cores on your machine.
 
@@ -55,12 +57,13 @@ Limit the agent to use at most 16Go of RAM and one-and-half cores on your machin
 systemctl set-property user-$(id -u agent).slice CPUQuota=150% MemoryMax=16G
 ```
 
-## Example 2: filter network traffic
+### Example 2: filter network traffic
 
-Run an HTTP proxy locally with your filtering rules, then configuring iptables:
+Run an HTTP proxy locally with your filtering rules, then configure iptables:
 
 ```shell
-# Redirect HTTP and HTTPS traffic from UNIX user `agent` to port 3128 (default port for Squid HTTP proxy)
+# Redirect HTTP and HTTPS traffic from UNIX user `agent` to
+# port 3128 (default port for Squid HTTP proxy)
 iptables -t nat -A OUTPUT -m owner --uid-owner agent -p tcp --dport 80  -j REDIRECT --to-port 3128
 iptables -t nat -A OUTPUT -m owner --uid-owner agent -p tcp --dport 443 -j REDIRECT --to-port 3128
 
