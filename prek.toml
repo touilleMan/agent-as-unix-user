@@ -28,7 +28,15 @@ l = {}
 exec(open('src/agent_as_unix_user/version.py').read(), l)
 vv = l['__version__']
 
+lk = tomllib.load(open('uv.lock','rb'))
+lv = next(p['version'] for p in lk['package'] if p['name'] == 'agent-as-unix-user')
+
+mismatches = []
 if pv != vv:
-    raise SystemExit(f'Version mismatch: pyproject.toml={pv!r} vs version.py={vv!r}')
+    mismatches.append(f'pyproject.toml={pv!r} vs version.py={vv!r}')
+if pv != lv:
+    mismatches.append(f'pyproject.toml={pv!r} vs uv.lock={lv!r}')
+if mismatches:
+    raise SystemExit('Version mismatch: ' + ', '.join(mismatches))
 "
 '''
