@@ -121,6 +121,15 @@ def mount_add(
             f"the agent directory {style(str(agent_home), fg='yellow')}"
         )
 
+    # Check if this source or target already exists
+    source_str = str(source)
+    target_str = str(target)
+    for m in agent.mounts:
+        if m.source == source_str or m.target == target_str:
+            raise click.ClickException(
+                f"source and/or target conflicts with existing bind mount {style(source_str, fg='yellow')} -> {style(target_str, fg='yellow')}"
+            )
+
     read_only = not read_write
 
     # For read-write mounts, configure ACLs on the source so both human and
