@@ -48,6 +48,7 @@ def run_as_agent(
     environs: dict[str, str],
     command: tuple[str, ...],
 ) -> None:
+    """Run a command as the agent UNIX user."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")

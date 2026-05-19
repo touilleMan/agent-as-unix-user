@@ -9,6 +9,7 @@ from . import AppState, cli
 @cli.command("list")
 @click.pass_obj
 def list(state: AppState) -> None:
+    """List all configured agents."""
     if not state.config.agents:
         echo("No agents configured.")
         return

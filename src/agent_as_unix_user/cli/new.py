@@ -27,6 +27,7 @@ from . import AppState, cli
 @click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
 def new_agent(state: AppState, user_name: str, yes: bool) -> None:
+    """Create a new agent with its UNIX user, group, and entrypoint."""
     config_path = state.config_path
     su_as_agent_group = expected_su_as_agent_group(user_name)
     home = expected_home(user_name, state.home_root)

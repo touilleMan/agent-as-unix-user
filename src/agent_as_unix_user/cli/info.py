@@ -11,6 +11,7 @@ from . import AppState, cli
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.pass_obj
 def info(state: AppState, user_name: str) -> None:
+    """Show configuration and health status for an agent."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")

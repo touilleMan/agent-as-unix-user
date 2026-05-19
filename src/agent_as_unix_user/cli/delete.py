@@ -18,6 +18,7 @@ from . import AppState, cli
 @click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
 def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) -> None:
+    """Delete an agent and remove its associated UNIX user and group."""
     agent = state.config.get_agent(user_name)
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
