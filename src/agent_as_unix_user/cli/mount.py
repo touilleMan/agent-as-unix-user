@@ -154,11 +154,13 @@ def mount_remove(state: AppState, user_name: str, source_or_target: str) -> None
     if agent is None:
         raise click.ClickException(f"unknown agent {user_name!r}")
 
+    resolved_path = str(Path(source_or_target).resolve())
+
     mount = next(
         (
             m
             for m in agent.mounts
-            if m.source == source_or_target or m.target == source_or_target
+            if m.source == resolved_path or m.target == resolved_path
         ),
         None,
     )
