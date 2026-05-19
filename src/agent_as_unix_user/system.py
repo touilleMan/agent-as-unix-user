@@ -174,7 +174,7 @@ def config_dir(home: Path) -> Path:
 
 
 def entrypoint_src_dir(home: Path) -> Path:
-    return config_dir() / "su_as_agent-src"
+    return config_dir(home) / "su_as_agent-src"
 
 
 def agent_readme_content(agent: AgentConfig, config_path: Path, home: Path) -> str:
