@@ -1,0 +1,27 @@
+jobs:
+  pypi-publish:
+    name: Upload release to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agent-as-unix-user
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # pin v6.0.2
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # pin v8.1.0
+      with:
+        # Install a specific version of uv.
+        version: "0.11.15"
+
+    - uses: j178/prek-action@bdca6f102f98e2b4c7029491a53dfd366469e33d # pin v2.0.4
+
+    - name: build
+      run: uv build
+
+    - name: Publish package distributions to PyPI
+      uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # pin v1.14.0
