@@ -9,3 +9,26 @@ hooks = [
     { id = "end-of-file-fixer" },
     { id = "check-added-large-files" },
 ]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "check-version-consistency"
+name = "Check version consistency (pyproject.toml vs version.py)"
+language = "system"
+pass_filenames = false
+always_run = true
+entry = '''
+python -c "
+import tomllib
+pv = tomllib.load(open('pyproject.toml','rb'))['project']['version']
+
+l = {}
+exec(open('src/agent_as_unix_user/version.py').read(), l)
+vv = l['__version__']
+
+if pv != vv:
+    raise SystemExit(f'Version mismatch: pyproject.toml={pv!r} vs version.py={vv!r}')
+"
+'''
