@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import click
+import sys
 from click import style
 from pathlib import Path
 import os
@@ -133,15 +134,25 @@ def run_as_agent(
         flag = "--mount-ro" if m.read_only else "--mount-rw"
         mount_args.extend([flag, m.source, m.target])
 
-    # Build the command to run as the agent
-    # If we have a working directory, we need to change to it before running the command
-    # We use bash -c to handle the directory change
+    # We use bash as a login, interactive shell to ensure the agent's environment
+    # (PATH, etc.) is properly set up by sourcing .profile, .bashrc, etc.
+    # Then pass the actual command to run with the -c flag
+
+    # Quote the working directory and command for safe shell execution
+    command_to_run = " ".join(shlex.quote(c) for c in command)
     if working_directory:
-        # Quote the working directory and command for safe shell execution
-        cd_and_command = f"cd {shlex.quote(str(working_directory))} && {' '.join(shlex.quote(c) for c in command)}"
-        full_command = ["bash", "-c", cd_and_command]
-    else:
-        full_command = list(command)
+        command_to_run = f"cd {shlex.quote(str(working_directory))} && { command_to_run }"
+    full_command = [
+            "bash",
+            # The --login flag makes bash source /etc/profile and ~/.profile (or ~/.bash_profile, ~/.bash_login)
+            "--login",
+            # The -i flag makes bash interactive, which prevents .bashrc from returning early due to
+            # the common "case $- in *i*) ;; *) return;; esac" guard.
+            # Note we only enable interactive if our own shell is itself interactive.
+            "-i" if sys.stdin.isatty() else "",
+            "-c",
+            command_to_run
+        ]
 
     result = state.runner.run(
         [
