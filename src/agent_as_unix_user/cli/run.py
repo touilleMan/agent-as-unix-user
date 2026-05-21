@@ -29,7 +29,7 @@ def validate_environs(
     return cooked
 
 
-@cli.command("run")
+@cli.command("run", context_settings={"ignore_unknown_options": True})
 @click.option("--agent", "-a", "user_name", default="agent", show_default=True)
 @click.option(
     "--env",
