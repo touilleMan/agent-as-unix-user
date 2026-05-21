@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 
 from . import AppState, cli
-from ..system import compute_sha256_fingerprint
+from ..system import compute_sha256_fingerprint, resolve_agent_home
 
 
 KEPT_ENVIRON_VARIALBES = ("LANG", "TERM")
@@ -44,6 +44,11 @@ def validate_environs(
     "--directory",
     "-d",
     "working_directory",
+    # Note click checks the directory, so this will lead to an error if the directory
+    # is not readable for our user.
+    # We consider this okay since, by design, the agent's home is supposed to be fully
+    # accessible to our user. However this may occur if the end user starts changing
+    # the access rights...
     type=click.Path(path_type=Path, resolve_path=True),
     default=None,
     help="""
@@ -91,8 +96,8 @@ def run_as_agent(
             relative_path = current_dir.relative_to(best_match.source)
             working_directory = Path(best_match.target) / relative_path
         else:
-            # No matching mount found, use current directory (will be relative to agent home)
-            working_directory = current_dir
+            # No matching mount found, use agent's home directory
+            working_directory = resolve_agent_home(agent.user_name) or Path.root
 
     # Drop the advisory lock on the configuration file since the subcommand is going
     # to take an arbitrary long time.
