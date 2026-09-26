@@ -4,17 +4,19 @@ import click
 from click import style
 import getpass
 from pathlib import Path
+import pwd
 import shutil
 import shlex
+import tempfile
 
 from ..config import AgentConfig
 from ..system import (
     acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
-    config_dir,
     entrypoint_src_makefile,
     agent_readme_content,
-    entrypoint_src_dir,
+    entrypoint_install_dir,
+    entrypoint_install_path,
     expected_su_as_agent_group,
     expected_home,
     compute_sha256_fingerprint,
@@ -31,8 +33,11 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     config_path = state.config_path
     su_as_agent_group = expected_su_as_agent_group(user_name)
     home = expected_home(user_name, state.home_root)
-    entrypoint = config_dir(home) / "su_as_agent"
-    entrypoint_src = entrypoint_src_dir(home)
+    entrypoint_dir = entrypoint_install_dir(user_name)
+    entrypoint = entrypoint_install_path(user_name)
+    # The uid allowed to run the entrypoint is the human creating the agent.
+    # Derive it from the same account we add to the agent's group below.
+    caller_uid = str(pwd.getpwnam(getpass.getuser()).pw_uid)
 
     if state.config.get_agent(user_name) is not None:
         raise click.ClickException(
@@ -142,7 +147,9 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         ),
     )
 
-    # Compile and install the entrypoint
+    # Build in a throw-away dir owned by the human (never the agent-controlled
+    # home), then install root-owned: the agent must not be able to modify the
+    # binary it invokes with root privileges.
 
     target_uid = state.runner.run(
         ["id", "--user", user_name],
@@ -161,33 +168,40 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     ).stdout.strip()
     int(target_gid)  # Sanity check to ensure we got the user ID
 
-    state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {entrypoint_src}"])
+    build_dir = Path(tempfile.mkdtemp(prefix="au-entrypoint-"))
+    try:
+        (build_dir / "main.c").write_text(ENTRYPOINT_SRC_MAIN_C)
+        (build_dir / "Makefile").write_text(
+            entrypoint_src_makefile(
+                target_uid=target_uid,
+                target_gid=target_gid,
+                caller_uid=caller_uid,
+            )
+        )
+        state.runner.run(["make", "-C", str(build_dir)])
 
-    _sg_copy_file(entrypoint_src / "main.c", ENTRYPOINT_SRC_MAIN_C)
-    _sg_copy_file(
-        entrypoint_src / "Makefile",
-        entrypoint_src_makefile(target_uid=target_uid, target_gid=target_gid),
-    )
-
-    state.runner.run(["sg", su_as_agent_group, "-c", f"make -C {entrypoint_src}"])
-    state.runner.run(
-        [
-            "sg",
-            su_as_agent_group,
-            "-c",
-            f"mv --force {entrypoint_src / 'su_as_agent'} {entrypoint}",
-        ]
-    )
-    # Here is the secret sauce:
-    # - Set root as the entrypoint binary's owner.
-    # - Set the SetUID bit on the entrypoint binary. This gives it the
-    #   file owner's privileges (i.e. root) instead of the caller's.
-    # - The group is set to the su-as-agent group so only members can execute it.
-    # This allows the binary to use root privileges to drop the caller's
-    # groups and become permanently the agent user.
-    state.runner.run(["sudo", "chown", f"root:{su_as_agent_group}", str(entrypoint)])
-    # Note the leading `4` in chmod, this is the setuid bit
-    state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
+        # Root-owned install directory, not writable by the agent or its group.
+        state.runner.run(["sudo", "mkdir", "-p", str(entrypoint_dir)])
+        state.runner.run(["sudo", "chown", "root:root", str(entrypoint_dir)])
+        state.runner.run(["sudo", "chmod", "755", str(entrypoint_dir)])
+        # owner root + setuid (4750) so the binary runs as root then drops to the
+        # agent; group su-as-agent so only group members may execute it.
+        state.runner.run(
+            [
+                "sudo",
+                "install",
+                "-o",
+                "root",
+                "-g",
+                su_as_agent_group,
+                "-m",
+                "4750",
+                str(build_dir / "su_as_agent"),
+                str(entrypoint),
+            ]
+        )
+    finally:
+        shutil.rmtree(build_dir, ignore_errors=True)
 
     # Finally update again the config to acknowledge the agent is ready
 

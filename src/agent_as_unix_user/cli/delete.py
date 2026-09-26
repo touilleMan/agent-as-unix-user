@@ -5,7 +5,7 @@ from pathlib import Path
 from click import echo, style
 import click
 
-from ..system import resolve_agent_home
+from ..system import entrypoint_install_dir, resolve_agent_home
 from .mount import _clear_source_acl
 from . import AppState, cli
 
@@ -106,6 +106,11 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
         state.runner.run(["sudo", "userdel", agent.user_name], check=False)
     if delete_group:
         state.runner.run(["sudo", "groupdel", agent.su_as_agent_group], check=False)
+
+    # Remove the root-owned entrypoint directory so no setuid-root binary is
+    # left behind for the deleted agent.
+    entrypoint_dir = entrypoint_install_dir(agent.user_name)
+    state.runner.run(["sudo", "rm", "-rf", str(entrypoint_dir)], check=False)
 
     if agent_home_to_delete:
         state.runner.run(["sudo", "rm", "-rf", str(agent_home_to_delete)], check=False)

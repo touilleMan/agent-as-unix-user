@@ -145,6 +145,13 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
         errors.append(f"missing entrypoint: {entrypoint}")
     elif not os.access(entrypoint, os.X_OK):
         errors.append(f"entrypoint is not executable: {entrypoint}")
+    elif is_entrypoint_inside_home(entrypoint, home):
+        # Legacy agents kept the setuid entrypoint inside the agent's home,
+        # where the agent could swap it out. Recreate the agent to relocate it.
+        errors.append(
+            f"entrypoint is inside the agent home ({entrypoint}); "
+            "it is writable by the agent — recreate this agent with `au new`"
+        )
     # TODO: check that entrypoint is owned by root
     # TODO: check that entrypoint has setuid bit set
 
@@ -173,8 +180,30 @@ def config_dir(home: Path) -> Path:
     return home / ".config" / "agent-as-unix-user"
 
 
-def entrypoint_src_dir(home: Path) -> Path:
-    return config_dir(home) / "su_as_agent-src"
+# Root-owned location for the setuid entrypoint. It is *outside* the agent's
+# home on purpose: the agent must never be able to modify (or swap out) the
+# binary it invokes with root privileges. Every directory on this path is
+# owned by root and only writable by root.
+ENTRYPOINT_INSTALL_ROOT = Path("/usr/local/libexec/agent-as-unix-user")
+
+
+def entrypoint_install_dir(user_name: str) -> Path:
+    return ENTRYPOINT_INSTALL_ROOT / user_name
+
+
+def entrypoint_install_path(user_name: str) -> Path:
+    return entrypoint_install_dir(user_name) / "su_as_agent"
+
+
+def is_entrypoint_inside_home(entrypoint: Path, home: Path | None) -> bool:
+    """True if the entrypoint lives inside the agent's home (insecure legacy layout)."""
+    if home is None:
+        return False
+    try:
+        entrypoint.resolve().relative_to(home.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 def agent_readme_content(agent: AgentConfig, config_path: Path, home: Path) -> str:
@@ -185,11 +214,8 @@ This directory belongs to the agent user `{agent.user_name}`.
 Related configuration file:
 - `{config_path}`
 
-Entrypoint:
-- `{config_dir(home) / "su_as_agent"}`
-
-Source code:
-- `{entrypoint_src_dir(home)}`
+Entrypoint (root-owned, outside this home):
+- `{entrypoint_install_path(agent.user_name)}`
 
 To delete this agent safely, use `au delete --user {agent.user_name}`.
 That command will remove the UNIX user, group, home directory and all data.
@@ -197,10 +223,12 @@ That command will remove the UNIX user, group, home directory and all data.
 
 
 ENTRYPOINT_SRC_MAIN_C = """
-#define _GNU_SOURCE  // Needed for setresgid/setresuid, unshare
+#define _GNU_SOURCE  // Needed for setresgid/setresuid, unshare, O_PATH
 #include <errno.h>
+#include <fcntl.h>
 #include <grp.h>
 #include <linux/limits.h>
+#include <linux/openat2.h>
 #include <pwd.h>
 #include <sched.h>
 #include <stdio.h>
@@ -208,6 +236,7 @@ ENTRYPOINT_SRC_MAIN_C = """
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #ifndef TARGET_UID
@@ -218,6 +247,12 @@ ENTRYPOINT_SRC_MAIN_C = """
 #ifndef TARGET_GID
 // `TARGET_GID` is defined by the Makefile
 #error TARGET_GID is not defined (compiling without the Makefile ?)
+#endif
+
+#ifndef CALLER_UID
+// `CALLER_UID` is defined by the Makefile (the uid of the human who created
+// the agent, and the only uid allowed to run this entrypoint).
+#error CALLER_UID is not defined (compiling without the Makefile ?)
 #endif
 
 #define MAX_MOUNTS 64
@@ -235,29 +270,59 @@ static int path_starts_with(const char *path, const char *prefix) {
     return path[len] == '\\0' || path[len] == '/';
 }
 
-static int mkdir_p(const char *path, mode_t mode, uid_t uid, gid_t gid) {
-    char tmp[PATH_MAX];
-    size_t len = strlen(path);
-    if (len >= sizeof(tmp)) { errno = ENAMETOOLONG; return -1; }
-    memcpy(tmp, path, len + 1);
-    if (len > 0 && tmp[len - 1] == '/') tmp[--len] = '\\0';
-    for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\\0';
-            if (mkdir(tmp, mode) == 0) {
-                if (chown(tmp, uid, gid) != 0) return -1;
-            } else if (errno != EEXIST) {
+// Open a single path component `name` relative to `dir_fd` as an O_PATH
+// directory fd, refusing to follow symlinks and refusing to escape `dir_fd`.
+// A symlink component fails with ELOOP rather than being followed — this is
+// what stops a caller from redirecting a mount target out of the agent's home.
+static int open_dir_beneath(int dir_fd, const char *name) {
+    struct open_how how;
+    memset(&how, 0, sizeof(how));
+    how.flags = O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    how.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS;
+    return (int)syscall(SYS_openat2, dir_fd, name, &how, sizeof(how));
+}
+
+// Resolve `rel` (a relative path) beneath `base_fd`, creating any missing
+// directory components as directories owned by the agent. Every component must
+// be a real directory: a symlink anywhere on the path is refused. Returns an
+// O_PATH fd to the leaf directory, or -1 with errno set. Caller closes the fd.
+static int resolve_beneath_create(int base_fd, const char *rel) {
+    char buf[PATH_MAX];
+    size_t len = strlen(rel);
+    if (len >= sizeof(buf)) { errno = ENAMETOOLONG; return -1; }
+    memcpy(buf, rel, len + 1);
+
+    int cur = dup(base_fd);
+    if (cur < 0) return -1;
+
+    char *saveptr = NULL;
+    for (char *tok = strtok_r(buf, "/", &saveptr); tok != NULL; ) {
+        char *next = strtok_r(NULL, "/", &saveptr);
+
+        // Reject "." and ".." (RESOLVE_BENEATH also blocks "..").
+        if (strcmp(tok, ".") == 0 || strcmp(tok, "..") == 0) {
+            close(cur);
+            errno = EINVAL;
+            return -1;
+        }
+
+        int fd = open_dir_beneath(cur, tok);
+        if (fd < 0 && errno == ENOENT) {
+            // Relative to `cur` (a real directory fd), so this can't cross a symlink.
+            if (mkdirat(cur, tok, 0755) != 0) { close(cur); return -1; }
+            if (fchownat(cur, tok, TARGET_UID, TARGET_GID, AT_SYMLINK_NOFOLLOW) != 0) {
+                close(cur);
                 return -1;
             }
-            *p = '/';
+            fd = open_dir_beneath(cur, tok);
         }
+        if (fd < 0) { close(cur); return -1; }
+
+        close(cur);
+        cur = fd;
+        tok = next;
     }
-    if (mkdir(tmp, mode) == 0) {
-        if (chown(tmp, uid, gid) != 0) return -1;
-    } else if (errno != EEXIST) {
-        return -1;
-    }
-    return 0;
+    return cur;
 }
 
 int main(int argc, char **argv) {
@@ -305,6 +370,17 @@ int main(int argc, char **argv) {
 
     uid_t original_uid = getuid();
 
+    // Only the human who created this agent may run the entrypoint.
+    // The binary is setuid-root and group-executable by the su-as-agent group,
+    // which is the agent's *primary* group. Without this check the agent could
+    // execute the entrypoint itself and abuse its root privileges to escalate.
+    if (original_uid != CALLER_UID) {
+        fprintf(stderr,
+                "ERROR: this entrypoint may only be run by uid %d (called by uid %d)\\n",
+                CALLER_UID, original_uid);
+        return 1;
+    }
+
     // Resolve caller's and agent's home directories for mount validation
     struct passwd *caller_pw = getpwuid(original_uid);
     if (!caller_pw || !caller_pw->pw_dir) {
@@ -347,28 +423,62 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Open the agent's home as an O_PATH anchor for resolving mount targets.
+    // Every target is resolved *beneath* this fd with symlinks refused, so a
+    // caller cannot redirect a target outside the home via a planted symlink.
+    int home_fd = -1;
+    if (mount_count > 0) {
+        home_fd = open(agent_home, O_PATH | O_DIRECTORY | O_CLOEXEC);
+        if (home_fd < 0) {
+            fprintf(stderr, "ERROR: cannot open agent home %s: %s\\n",
+                    agent_home, strerror(errno));
+            return 1;
+        }
+    }
+
     // Validate and perform bind mounts
     for (int i = 0; i < mount_count; i++) {
-        // Resolve source to realpath
-        char real_source[PATH_MAX];
-        if (!realpath(mounts[i].source, real_source)) {
-            fprintf(stderr, "ERROR: cannot resolve mount source: %s: %s\\n",
+        // --- Source ---
+        // Open and validate through the fd, so the checks and the mount refer to
+        // the same inode (no check/use gap). Symlinks are followed: the checks
+        // below run on the resolved inode (owned by the caller, under their
+        // home), so a link is safe and links within the home keep working.
+        int src_fd = open(mounts[i].source, O_PATH | O_CLOEXEC);
+        if (src_fd < 0) {
+            fprintf(stderr, "ERROR: cannot open mount source %s: %s\\n",
                     mounts[i].source, strerror(errno));
             return 1;
         }
 
-        // Security check: source must be under the caller's home
-        if (!path_starts_with(real_source, caller_home)) {
-            fprintf(stderr, "ERROR: mount source %s is not under caller's home %s\\n",
-                    real_source, caller_home);
+        char src_fd_path[64];
+        snprintf(src_fd_path, sizeof(src_fd_path), "/proc/self/fd/%d", src_fd);
+
+        // Real path of the opened inode, for the checks below and error messages.
+        char real_source[PATH_MAX];
+        ssize_t n = readlink(src_fd_path, real_source, sizeof(real_source) - 1);
+        if (n < 0) {
+            fprintf(stderr, "ERROR: cannot resolve mount source %s: %s\\n",
+                    mounts[i].source, strerror(errno));
+            return 1;
+        }
+        real_source[n] = '\\0';
+
+        struct stat src_stat;
+        if (fstat(src_fd, &src_stat) != 0) {
+            fprintf(stderr, "ERROR: cannot stat mount source %s: %s\\n",
+                    real_source, strerror(errno));
             return 1;
         }
 
-        // Security check: source must be owned by the caller
-        struct stat src_stat;
-        if (stat(real_source, &src_stat) != 0) {
-            fprintf(stderr, "ERROR: cannot stat mount source %s: %s\\n",
-                    real_source, strerror(errno));
+        // The source must be a directory the caller owns, under their home.
+        if (!S_ISDIR(src_stat.st_mode)) {
+            fprintf(stderr, "ERROR: mount source %s is not a directory\\n",
+                    real_source);
+            return 1;
+        }
+        if (!path_starts_with(real_source, caller_home)) {
+            fprintf(stderr, "ERROR: mount source %s is not under caller's home %s\\n",
+                    real_source, caller_home);
             return 1;
         }
         if (src_stat.st_uid != original_uid) {
@@ -378,35 +488,63 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // Security check: target must be under the agent's home
+        // --- Target ---
+        // This only derives the home-relative path; the protection is resolving
+        // it beneath home_fd with symlinks refused (below).
         if (!path_starts_with(mounts[i].target, agent_home)) {
             fprintf(stderr, "ERROR: mount target %s is not under agent's home %s\\n",
                     mounts[i].target, agent_home);
             return 1;
         }
+        const char *rel = mounts[i].target + strlen(agent_home);
+        while (*rel == '/') rel++;
 
-        // Create the target directory
-        if (mkdir_p(mounts[i].target, 0755, TARGET_UID, TARGET_GID) != 0) {
+        int tgt_fd = resolve_beneath_create(home_fd, rel);
+        if (tgt_fd < 0) {
             fprintf(stderr, "ERROR: cannot create mount target %s: %s\\n",
                     mounts[i].target, strerror(errno));
             return 1;
         }
 
-        // Bind mount (read-write initially, then remount read-only if requested)
-        if (mount(real_source, mounts[i].target, NULL, MS_BIND, NULL) != 0) {
+        char tgt_fd_path[64];
+        snprintf(tgt_fd_path, sizeof(tgt_fd_path), "/proc/self/fd/%d", tgt_fd);
+
+        // --- Bind mount, referring to both inodes through /proc/self/fd so the
+        // resolved source/target cannot be swapped between check and mount. ---
+        if (mount(src_fd_path, tgt_fd_path, NULL, MS_BIND, NULL) != 0) {
             fprintf(stderr, "ERROR: bind mount %s -> %s failed: %s\\n",
                     real_source, mounts[i].target, strerror(errno));
             return 1;
         }
-        if (mounts[i].read_only) {
-            if (mount(NULL, mounts[i].target, NULL,
-                      MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) != 0) {
-                fprintf(stderr, "ERROR: remount read-only %s failed: %s\\n",
-                        mounts[i].target, strerror(errno));
-                return 1;
-            }
+        // A bind ignores nosuid/nodev/ro on the initial mount, so apply them via
+        // remount. The remount must hit the new mount, but `tgt_fd` predates it
+        // and refers to the underlying dir (remounting through it gives EINVAL);
+        // re-resolving crosses into the mount. `tgt_fd` stays open to pin the path.
+        int mnt_fd = resolve_beneath_create(home_fd, rel);
+        if (mnt_fd < 0) {
+            fprintf(stderr, "ERROR: cannot reopen mount target %s: %s\\n",
+                    mounts[i].target, strerror(errno));
+            return 1;
         }
+        char mnt_fd_path[64];
+        snprintf(mnt_fd_path, sizeof(mnt_fd_path), "/proc/self/fd/%d", mnt_fd);
+
+        unsigned long remount_flags = MS_REMOUNT | MS_BIND | MS_NOSUID | MS_NODEV;
+        if (mounts[i].read_only)
+            remount_flags |= MS_RDONLY;
+        if (mount(NULL, mnt_fd_path, NULL, remount_flags, NULL) != 0) {
+            fprintf(stderr, "ERROR: remount (%s) of %s failed: %s\\n",
+                    mounts[i].read_only ? "ro,nosuid,nodev" : "nosuid,nodev",
+                    mounts[i].target, strerror(errno));
+            return 1;
+        }
+
+        close(mnt_fd);
+        close(src_fd);
+        close(tgt_fd);
     }
+    if (home_fd >= 0)
+        close(home_fd);
 
     // ------------- LEAVING ROOT, BECOMING AGENT --------------------
 
@@ -460,15 +598,16 @@ int main(int argc, char **argv) {
 """
 
 
-def entrypoint_src_makefile(target_uid: str, target_gid: str) -> str:
+def entrypoint_src_makefile(target_uid: str, target_gid: str, caller_uid: str) -> str:
     return f"""\
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -Werror
 TARGET_UID ?= {target_uid}
 TARGET_GID ?= {target_gid}
+CALLER_UID ?= {caller_uid}
 
 all: su_as_agent
 
 su_as_agent: main.c
-	$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -DTARGET_GID=$(TARGET_GID) -o $@ $<
+	$(CC) $(CFLAGS) -DTARGET_UID=$(TARGET_UID) -DTARGET_GID=$(TARGET_GID) -DCALLER_UID=$(CALLER_UID) -o $@ $<
 """

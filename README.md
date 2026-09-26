@@ -62,7 +62,7 @@ uv tool install agent-as-unix-user
 > agent-as-unix-user has the following requirements:
 >
 > - Linux with ACL support
-> - A C compiler (for the setuid entrypoint, see [below](#how-it-works))
+> - A C compiler and `make` (for the setuid entrypoint, see [below](#how-it-works))
 > - `sudo` access (for user/group creation and setuid setup)
 
 ## Recipes
@@ -101,9 +101,9 @@ When you create an agent, agent-as-unix-user will:
 1. Create a UNIX user (e.g. `agent`) and a group (`su-as-agent`)
 2. Add your user to the group so you can interact with the agent's files
 3. Configure the agent's home directory with setgid + ACL defaults so files created by either user remain editable by both
-4. Compile and install a small setuid C binary (`/home/agent/su_as_agent`) to execute commands as the agent.
+4. Compile a small setuid C binary and install it, owned by `root`, at `/usr/local/libexec/agent-as-unix-user/agent/su_as_agent` to execute commands as the agent.
 
-To run a command as an agent, `au run my_command` itself uses `/home/agent/su_as_agent`, which:
+To run a command as an agent, `au run my_command` itself uses that binary, which:
 
 - Scrubs your environment variables (only `LANG` and `TERM` are kept).
 - Drops all the groups inherited from the original user.
@@ -121,20 +121,17 @@ $ sudo groupadd su-as-agent2
 [sudo] password for touilleMan:
 $ sudo useradd --shell /usr/bin/bash --no-user-group --create-home --home-dir /home/agent2 --gid su-as-agent2 agent2
 $ sudo usermod --append --groups su-as-agent2 touilleMan
-$ sudo chgrp su-as-agent2 /home/agent2
 $ sudo chmod 2770 /home/agent2
 $ sudo setfacl --modify default:group:su-as-agent2:rwx /home/agent2
 $ sg su-as-agent2 -c 'tee /home/agent2/README.md'
-$ sg su-as-agent2 -c 'mkdir -p /home/agent2/.config/agent-as-unix-user/su_as_agent-src'
-$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-unix-user/su_as_agent-src/main.c'
-$ sg su-as-agent2 -c 'tee /home/agent2/.config/agent-as-unix-user/su_as_agent-src/Makefile'
-$ sg su-as-agent2 -c 'make -C /home/agent2/.config/agent-as-unix-user/su_as_agent-src'
-make: Entering directory '/home/agent2/.config/agent-as-unix-user/su_as_agent-src'
-cc -O2 -Wall -Wextra -Werror -DTARGET_UID=1003 -DTARGET_GID=1003 -o su_as_agent main.c
-make: Leaving directory '/home/agent2/.config/agent-as-unix-user/su_as_agent-src'
-$ sg su-as-agent2 -c 'mv --force /home/agent2/.config/agent-as-unix-user/su_as_agent-src/su_as_agent /home/agent2/su_as_agent'
-$ sudo chown root:su-as-agent2 /home/agent2/su_as_agent
-$ sudo chmod 4750 /home/agent2/su_as_agent
+$ make -C /tmp/au-entrypoint-ab12cd34
+make: Entering directory '/tmp/au-entrypoint-ab12cd34'
+cc -O2 -Wall -Wextra -Werror -DTARGET_UID=1003 -DTARGET_GID=1003 -DCALLER_UID=1000 -o su_as_agent main.c
+make: Leaving directory '/tmp/au-entrypoint-ab12cd34'
+$ sudo mkdir -p /usr/local/libexec/agent-as-unix-user/agent2
+$ sudo chown root:root /usr/local/libexec/agent-as-unix-user/agent2
+$ sudo chmod 755 /usr/local/libexec/agent-as-unix-user/agent2
+$ sudo install -o root -g su-as-agent2 -m 4750 /tmp/au-entrypoint-ab12cd34/su_as_agent /usr/local/libexec/agent-as-unix-user/agent2/su_as_agent
 Created agent agent2
 ```
 
@@ -197,7 +194,7 @@ au delete --delete-home          # also remove the home directory
 au delete --yes                  # skip confirmation prompt
 ```
 
-Requires root/sudo. Removes the UNIX user, group, and optionally the home directory.
+Requires root/sudo. Removes the UNIX user, group, the root-owned entrypoint, and optionally the home directory.
 Resilient to partial state — if some resources are already gone, it skips them and continues.
 
 ### Global options
