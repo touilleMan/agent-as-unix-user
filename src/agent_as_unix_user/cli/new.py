@@ -11,13 +11,15 @@ from ..config import AgentConfig
 from ..system import (
     acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
-    config_dir,
+    agent_config_dir,
     entrypoint_src_makefile,
     agent_readme_content,
-    entrypoint_src_dir,
+    agent_entrypoint_src_dir,
     expected_su_as_agent_group,
-    expected_home,
+    expected_agent_home,
     compute_sha256_fingerprint,
+    sshd_config_content,
+    agent_sshd_dir,
 )
 from . import AppState, cli
 from .mount import _apply_source_acl
@@ -31,8 +33,8 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     """Create a new agent with its UNIX user, group, and entrypoint."""
     config_path = state.config_path
     su_as_agent_group = expected_su_as_agent_group(user_name)
-    home = expected_home(user_name, state.home_root)
-    entrypoint = config_dir(home) / "su_as_agent"
+    home = expected_agent_home(user_name, state.home_root)
+    entrypoint = agent_config_dir(home) / "su_as_agent"
 
     if state.config.get_agent(user_name) is not None:
         raise click.ClickException(
@@ -54,11 +56,12 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     # being created (important for cleanup if we crash...)
 
     agent_config = AgentConfig(
+        bootstrapped=False,
         user_name=user_name,
         su_as_agent_group=su_as_agent_group,
         entrypoint=str(entrypoint),
         entrypoint_sha256="<unknown>",
-        bootstrapped=False,
+        ssh_identity=None,
         mounts=[],
     )
 
@@ -81,12 +84,14 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     state.config.upsert_agent(agent_config)
     state.config.save()
 
-    user_name = agent_config.user_name
+    a_user_name = agent_config.user_name
     su_as_agent_group = agent_config.su_as_agent_group
-    config_path = state.config_path
-    home = expected_home(user_name, state.home_root)
-    entrypoint = config_dir(home) / "su_as_agent"
-    entrypoint_src = entrypoint_src_dir(home)
+    h_config_path = state.config_path
+    h_ssh_config_dir = h_config_path / "ssh"
+    a_home = expected_agent_home(a_user_name, state.home_root)
+    a_config_dir = agent_config_dir(a_home)
+    a_entrypoint = a_config_dir / "su_as_agent"
+    a_entrypoint_src = agent_entrypoint_src_dir(a_home)
 
     # Convoluted way to copy a file into the agent's home: we must use `sg`
     # (to execute as the su-as-agent group) since our current session may not
@@ -118,10 +123,10 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
             "--no-user-group",
             "--create-home",
             "--home-dir",
-            str(home),
+            str(a_home),
             "--gid",
             su_as_agent_group,
-            user_name,
+            a_user_name,
         ]
     )
     # Give access to the su_as_agent UNIX group to our user
@@ -140,7 +145,7 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     # su_as_agent UNIX group instead of the default group of the creator.
     # This is useful to ensure all files created in the home can be modified
     # by all members of the su_as_agent UNIX group.
-    state.runner.run(["sudo", "chmod", "2770", str(home)])
+    state.runner.run(["sudo", "chmod", "2770", str(a_home)])
     # But that's not all! We also need to ensure the umask a user is using won't
     # create a file that cannot be modified by the group.
     # For this we use the ACL defaults to ensure the group always has RWX rights.
@@ -150,9 +155,13 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
             "setfacl",
             "--modify",
             f"default:group:{su_as_agent_group}:rwx",
-            str(home),
+            str(a_home),
         ]
     )
+
+    # Overwrite the config if this home is being reused (e.g. `au delete --and-recreate`)
+
+    state.runner.run(["rm", "-rf", str(a_config_dir)])
 
     # Since the UNIX group has just been created, our current session doesn't
     # have access to it!
@@ -160,18 +169,18 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     # as prefix (which execute command as this group ID).
 
     _sg_copy_file(
-        home / "README.md",
+        a_home / "README.md",
         agent_readme_content(
             agent_config,
-            config_path,
-            home,
+            h_config_path,
+            a_home,
         ),
     )
 
     # Compile and install the entrypoint
 
     target_uid = state.runner.run(
-        ["id", "--user", user_name],
+        ["id", "--user", a_user_name],
         capture_output=True,
         text=True,
         check=False,
@@ -179,7 +188,7 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     ).stdout.strip()
     int(target_uid)  # Sanity check to ensure we got the user ID
     target_gid = state.runner.run(
-        ["id", "--group", user_name],
+        ["id", "--group", a_user_name],
         capture_output=True,
         text=True,
         check=False,
@@ -187,21 +196,21 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     ).stdout.strip()
     int(target_gid)  # Sanity check to ensure we got the user ID
 
-    state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {entrypoint_src}"])
+    state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {a_entrypoint_src}"])
 
-    _sg_copy_file(entrypoint_src / "main.c", ENTRYPOINT_SRC_MAIN_C)
+    _sg_copy_file(a_entrypoint_src / "main.c", ENTRYPOINT_SRC_MAIN_C)
     _sg_copy_file(
-        entrypoint_src / "Makefile",
+        a_entrypoint_src / "Makefile",
         entrypoint_src_makefile(target_uid=target_uid, target_gid=target_gid),
     )
 
-    state.runner.run(["sg", su_as_agent_group, "-c", f"make -C {entrypoint_src}"])
+    state.runner.run(["sg", su_as_agent_group, "-c", f"make -C {a_entrypoint_src}"])
     state.runner.run(
         [
             "sg",
             su_as_agent_group,
             "-c",
-            f"mv --force {entrypoint_src / 'su_as_agent'} {entrypoint}",
+            f"mv --force {a_entrypoint_src / 'su_as_agent'} {a_entrypoint}",
         ]
     )
     # Here is the secret sauce:
@@ -211,9 +220,65 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     # - The group is set to the su-as-agent group so only members can execute it.
     # This allows the binary to use root privileges to drop the caller's
     # groups and become permanently the agent user.
-    state.runner.run(["sudo", "chown", f"root:{su_as_agent_group}", str(entrypoint)])
+    state.runner.run(["sudo", "chown", f"root:{su_as_agent_group}", str(a_entrypoint)])
     # Note the leading `4` in chmod, this is the setuid bit
-    state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
+    state.runner.run(["sudo", "chmod", "4750", str(a_entrypoint)])
+
+    # Configure the sshd prerequisites, used by `au sshd` to have the agent user
+    # run a ssh server listening on localhost:
+    # - a dedicated ssh identity whose public key is the only one accepted
+    # - the sshd config/host key/authorized keys
+
+    h_ssh_config_dir.mkdir(parents=True, exist_ok=True)
+    h_ssh_identity = h_ssh_config_dir / f"{agent_config.user_name}_id_ed25519"
+    h_ssh_identity_pub = h_ssh_config_dir / f"{h_ssh_identity}.pub"
+    state.runner.run(["rm", "-f", str(h_ssh_identity), str(h_ssh_identity_pub)])
+    state.runner.run(
+        [
+            "ssh-keygen",
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            f"au-{a_user_name}",
+            "-f",
+            str(h_ssh_identity),
+        ]
+    )
+    agent_config.ssh_identity = str(h_ssh_identity)
+
+    a_sshd_dir = agent_sshd_dir(a_home)
+    state.runner.run(
+        ["sg", su_as_agent_group, "-c", f"mkdir -p {a_sshd_dir}"]
+    )
+    a_host_key = a_sshd_dir / "host_ed25519_key"
+    state.runner.run(
+        [
+            "sg",
+            su_as_agent_group,
+            "-c",
+            shlex.join(
+                [
+                    "ssh-keygen",
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-C",
+                    f"au-sshd-{a_user_name}",
+                    "-f",
+                    str(a_host_key),
+                ]
+            ),
+        ]
+    )
+    state.runner.run(["chmod", "600", str(a_host_key)])
+    state.runner.run(["sudo", "chown", a_user_name, str(a_host_key)])
+    _sg_copy_file(a_sshd_dir / "sshd_config", sshd_config_content(a_home))
+    _sg_copy_file(a_sshd_dir / "authorized_keys", h_ssh_identity_pub.read_text().strip() + "\n")
 
     # Re-apply the ACLs of the read-write bind mounts: `au delete` clears them,
     # so this is a no-op for a fresh `au new` (which has no mounts yet) and
@@ -242,7 +307,7 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
             "-",
             su_as_agent_group,
             "-c",
-            shlex.join(["cat", str(entrypoint)]),
+            shlex.join(["cat", str(a_entrypoint)]),
         ],
         capture_output=True,
         text=False,

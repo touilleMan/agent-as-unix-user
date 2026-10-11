@@ -37,6 +37,12 @@ class MountConfig:
 
 @dataclass(slots=True)
 class AgentConfig:
+    bootstrapped: bool
+    """
+    If the agent has been fully configured (UNIX user, group etc.).
+
+    Might be `False` if new agent command couldn't finish...
+    """
     user_name: str
     "UNIX user name"
     su_as_agent_group: str
@@ -52,12 +58,9 @@ class AgentConfig:
     is possible in the first place since the entrypoint *must* be owned by
     the agent) in order to trick the human into doing something.
     """
-    bootstrapped: bool
-    """
-    If the agent has been fully configured (UNIX user, group etc.).
-
-    Might be `False` if new agent command couldn't finish...
-    """
+    # `None` for legacy config
+    ssh_identity: str | None
+    "Path to the SSH identity key used when running a sshd server (see `au sshd`)."
     mounts: list[MountConfig]
     "Bind mounts to set up when running as the agent"
 
@@ -103,11 +106,12 @@ class Config:
             lines.extend(
                 [
                     "[[agents]]",
+                    f"bootstrapped = {json.dumps(agent.bootstrapped)}",
                     f"user_name = {json.dumps(agent.user_name)}",
                     f"su_as_agent_group = {json.dumps(agent.su_as_agent_group)}",
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
-                    f"bootstrapped = {json.dumps(agent.bootstrapped)}",
+                    *((f"ssh_identity = {json.dumps(agent.ssh_identity)}", ) if agent.ssh_identity else ()),
                     *(
                         f"[[agents.mounts]]\nsource = {json.dumps(m.source)}\ntarget = {json.dumps(m.target)}\nread_only = {json.dumps(m.read_only)}"
                         for m in agent.mounts
@@ -162,11 +166,12 @@ class Config:
             if raw:
                 agents = [
                     AgentConfig(
+                        bootstrapped=bool(item["bootstrapped"]),
                         user_name=str(item["user_name"]),
                         su_as_agent_group=str(item["su_as_agent_group"]),
                         entrypoint=str(item["entrypoint"]),
                         entrypoint_sha256=str(item["entrypoint_sha256"]),
-                        bootstrapped=bool(item["bootstrapped"]),
+                        ssh_identity=str(x) if (x := item.get("ssh_identity")) is not None else None,
                         mounts=[
                             MountConfig(
                                 source=str(m["source"]),

@@ -109,6 +109,8 @@ from . import info as _info  # noqa: E402,F401
 from . import list as _list  # noqa: E402,F401
 from . import new as _new  # noqa: E402,F401
 from . import run as _run  # noqa: E402,F401
+from . import sshd as _sshd  # noqa: E402,F401
+from . import vscode_url as _vscode_url  # noqa: E402,F401
 
 
 def main() -> None:

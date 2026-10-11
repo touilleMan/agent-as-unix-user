@@ -3,8 +3,10 @@ from __future__ import annotations
 from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import os
-
+import shlex
+import click
 
 from .config import AgentConfig
 from .runner import CommandRunner
@@ -25,7 +27,7 @@ def expected_su_as_agent_group(user_name: str) -> str:
     return f"su-as-{user_name}"
 
 
-def expected_home(user_name: str, home_root: Path = Path("/home")) -> Path:
+def expected_agent_home(user_name: str, home_root: Path = Path("/home")) -> Path:
     return home_root / user_name
 
 
@@ -44,7 +46,7 @@ def _user_exists(runner: CommandRunner, user_name: str) -> tuple[bool, dict[str,
         "user_name": fields[0] if len(fields) > 0 else user_name,
         "uid": fields[2] if len(fields) > 2 else "",
         "gid": fields[3] if len(fields) > 3 else "",
-        "home": fields[5] if len(fields) > 5 else str(expected_home(user_name)),
+        "home": fields[5] if len(fields) > 5 else str(expected_agent_home(user_name)),
         "shell": fields[6] if len(fields) > 6 else "",
     }
     return True, info
@@ -118,49 +120,70 @@ def _has_setgid(path: Path) -> bool:
 
 def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckResult:
     errors: list[str] = []
-    home = resolve_agent_home(agent.user_name)
+    a_home = resolve_agent_home(agent.user_name)
 
-    user_ok, user_info = _user_exists(runner, agent.user_name)
+    user_ok, a_user_info = _user_exists(runner, agent.user_name)
     if not user_ok:
         errors.append("missing UNIX user")
 
     if not _group_exists(runner, agent.su_as_agent_group):
         errors.append("missing UNIX group")
 
-    if home is None or not home.exists():
-        errors.append(f"missing home directory: {home}")
+    if a_home is None or not a_home.exists():
+        errors.append(f"missing home directory: {a_home}")
     else:
-        if not _has_setgid(home):
+        if not _has_setgid(a_home):
             errors.append("home directory missing setgid bit")
 
-        acl = _read_acl(runner, home)
+        a_acl = _read_acl(runner, a_home)
         expected_default_group_acl = f"default:group:{agent.su_as_agent_group}:rwx"
-        if not acl:
+        if not a_acl:
             errors.append("missing default ACL configuration or ACL unsupported")
-        elif expected_default_group_acl not in acl.splitlines():
+        elif expected_default_group_acl not in a_acl.splitlines():
             errors.append("default ACL is not configured")
 
-    entrypoint = Path(agent.entrypoint)
-    if not entrypoint.exists():
-        errors.append(f"missing entrypoint: {entrypoint}")
-    elif not os.access(entrypoint, os.X_OK):
-        errors.append(f"entrypoint is not executable: {entrypoint}")
+    a_entrypoint = Path(agent.entrypoint)
+    if not a_entrypoint.exists():
+        errors.append(f"missing entrypoint: {a_entrypoint}")
+    elif not os.access(a_entrypoint, os.X_OK):
+        errors.append(f"entrypoint is not executable: {a_entrypoint}")
     # TODO: check that entrypoint is owned by root
     # TODO: check that entrypoint has setuid bit set
 
-    groups = _current_user_groups(runner)
-    if agent.su_as_agent_group not in groups:
+    a_groups = _current_user_groups(runner)
+    if agent.su_as_agent_group not in a_groups:
         errors.append(f"current user is not a member of {agent.su_as_agent_group}")
 
     if not acl_supported(runner):
         errors.append("ACL is not supported on this system")
 
-    if user_ok and not user_info.get("home"):
+    if user_ok and not a_user_info.get("home"):
         errors.append("user account has no home directory configured")
+
+    h_identity = Path(agent.ssh_identity)
+    h_identity_pub = Path(f"{agent.ssh_identity}.pub")
+    if not h_identity.exists():
+        errors.append(f"missing ssh identity: {h_identity}")
+    if a_home is not None:
+        a_sshd_dir = agent_sshd_dir(a_home)
+        sshd_config = a_sshd_dir / "sshd_config"
+        if not sshd_config.exists():
+            errors.append(f"missing sshd config: {sshd_config}")
+        authorized_keys = a_sshd_dir / "authorized_keys"
+        if not authorized_keys.exists():
+            errors.append(f"missing ssh authorized keys: {authorized_keys}")
+        elif not h_identity_pub.exists():
+            errors.append(f"missing ssh identity public key: {h_identity_pub}")
+        else:
+            pub = h_identity_pub.read_text().strip()
+            if pub not in authorized_keys.read_text().splitlines():
+                errors.append(
+                    f"ssh authorized keys are missing the ssh identity public key ({h_identity_pub})"
+                )
 
     return HealthCheckResult(
         user_name=agent.user_name,
-        home=str(home),
+        home=str(a_home),
         errors=errors,
     )
 
@@ -169,12 +192,99 @@ def compute_sha256_fingerprint(data: bytes) -> str:
     return sha256(data).digest().hex()
 
 
-def config_dir(home: Path) -> Path:
+def verify_entrypoint(runner: CommandRunner, agent: AgentConfig) -> None:
+    """Check the setuid entrypoint hasn't been tempered with since `au new`."""
+    result = runner.run(
+        [
+            # Use `sg` to execute the command as group `su_as_agent_group` even
+            # if the current session hasn't been re-login yet.
+            "sg",
+            "-",
+            agent.su_as_agent_group,
+            "-c",
+            shlex.join(["cat", agent.entrypoint]),
+        ],
+        capture_output=True,
+        text=False,
+        quiet=True,
+    )
+    assert isinstance(result.stdout, bytes)
+    entrypoint_sha256 = compute_sha256_fingerprint(result.stdout)
+    if entrypoint_sha256 != agent.entrypoint_sha256:
+        raise click.ClickException(
+            f"entrypoint {click.style(agent.entrypoint, fg='yellow')} has been tempered: "
+            f"expected hash {click.style(agent.entrypoint_sha256, fg='green')}, "
+            f"got {click.style(entrypoint_sha256, fg='red')}"
+        )
+
+
+def agent_config_dir(home: Path) -> Path:
     return home / ".config" / "agent-as-unix-user"
 
 
-def entrypoint_src_dir(home: Path) -> Path:
-    return config_dir(home) / "su_as_agent-src"
+def agent_entrypoint_src_dir(home: Path) -> Path:
+    return agent_config_dir(home) / "su_as_agent-src"
+
+
+def agent_sshd_dir(home: Path) -> Path:
+    return agent_config_dir(home) / "sshd"
+
+
+def sshd_config_content(home: Path) -> str:
+    ssh_dir = agent_sshd_dir(home)
+    # `StrictModes no` is required here: the agent's home is group-writable by
+    # design (that's how the human accesses it), and sshd would otherwise refuse
+    # the authorized_keys file. This only affects this sshd instance which, being
+    # run by the agent user, can only ever serve the agent user.
+    # Note the port is not part of the config: `au sshd` picks a random one and
+    # passes it with `-p`.
+    return f"""\
+ListenAddress 127.0.0.1
+HostKey {ssh_dir / "host_ed25519_key"}
+PidFile {ssh_dir / "sshd.pid"}
+AuthorizedKeysFile {ssh_dir / "authorized_keys"}
+StrictModes no
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+"""
+
+
+def vscode_ssh_remote_authority(
+    agent_user_name: str, port: int, host: str = "127.0.0.1"
+) -> str:
+    """Build the VS Code remote authority (e.g. `ssh-remote+<hex>`) for the
+    agent's sshd.
+
+    VS Code's Remote-SSH resolves `ssh-remote+<label>` authorities by first
+    trying to hex-decode `<label>` as a JSON connection descriptor
+    (`{"hostName": ..., "user": ..., "port": ...}`), which is exactly how the
+    extension itself encodes its recent connections carrying a port. This lets
+    us point VS Code at the agent's sshd without touching ~/.ssh/config.
+    """
+    descriptor = json.dumps({"hostName": host, "user": agent_user_name, "port": port})
+    return "ssh-remote+" + descriptor.encode("utf-8").hex()
+
+
+def add_known_hosts_entry(known_hosts: Path, entry: str) -> bool:
+    """Add `entry` to `known_hosts` if not already present, return True if added."""
+    existing = known_hosts.read_text() if known_hosts.exists() else ""
+    if entry in existing.splitlines():
+        return False
+    known_hosts.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with known_hosts.open("a", encoding="utf-8") as fh:
+        fh.write(entry + "\n")
+    return True
+
+
+def remove_known_hosts_entries(known_hosts: Path, port: int, host: str = "127.0.0.1") -> None:
+    """Remove all the entries corresponding to `host`/`port` from `known_hosts`."""
+    if not known_hosts.exists():
+        return
+    prefix = f"[{host}]:{port} "
+    remaining = [line for line in known_hosts.read_text().splitlines() if not line.startswith(prefix)]
+    known_hosts.write_text("".join(line + "\n" for line in remaining), encoding="utf-8")
 
 
 def agent_readme_content(agent: AgentConfig, config_path: Path, home: Path) -> str:
@@ -186,10 +296,10 @@ Related configuration file:
 - `{config_path}`
 
 Entrypoint:
-- `{config_dir(home) / "su_as_agent"}`
+- `{agent_config_dir(home) / "su_as_agent"}`
 
 Source code:
-- `{entrypoint_src_dir(home)}`
+- `{agent_entrypoint_src_dir(home)}`
 
 To delete this agent safely, use `au delete --user {agent.user_name}`.
 That command will remove the UNIX user, group, home directory and all data.

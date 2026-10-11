@@ -14,6 +14,8 @@ au run --env FOO=bar bash  # Run bash with an environment variable
 au mount add --rw ~/example # Expose `~/example` in `/home/agent/example` with read&write access
 cd ~/example && au run bash # `au` detects current directory corresponds to agent's
                             # `/home/agent/example`, so it changes to it before starting bash
+au sshd  # Start a ssh server listening on localhost
+au vscode-url --open /home/agent/example  # Open folder in a vscode connected to the sshd server
 ```
 
 UNIX has been designed from the ground up to allow multiple users to securely share a single machine
@@ -164,6 +166,14 @@ au run --env API_KEY=xxx -- cmd      # pass environment variables
 Before executing, `au run` verifies the entrypoint binary hasn't been modified by comparing its SHA-256 hash with the stored fingerprint.
 The environment is scrubbed by default — only `LANG` and `TERM` are kept, plus any variables passed explicitly via `--env`.
 
+### Connect VS Code to the agent
+
+```bash
+au sshd                                         # run an sshd as the agent user, Ctrl+C to stop
+au vscode-url /home/agent/projects/foo/bar.py   # print a vscode:// link to this file
+au vscode-url --open /home/agent/projects/foo    # open the link with xdg-open
+```
+
 ### Show agent info & health
 
 ```bash
@@ -179,6 +189,7 @@ Displays the agent's home directory, group, entrypoint path, ACL external access
 - Entrypoint exists and is executable
 - Current user is a member of the agent's group
 - ACL tooling is available on the system
+- The localhost sshd server prerequisites are in place
 
 ### List agents
 
@@ -195,6 +206,7 @@ au delete                        # delete default agent "agent"
 au delete --agent agentA         # delete a specific agent
 au delete --delete-home          # also remove the home directory
 au delete --yes                  # skip confirmation prompt
+au delete --and-recreate         # recreate the agent, useful when upgrading `au`
 ```
 
 Requires root/sudo. Removes the UNIX user, group, and optionally the home directory.

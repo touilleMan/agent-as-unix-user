@@ -3,12 +3,11 @@ from __future__ import annotations
 import shlex
 import click
 import sys
-from click import style
 from pathlib import Path
 import os
 
 from . import AppState, cli
-from ..system import compute_sha256_fingerprint, resolve_agent_home
+from ..system import resolve_agent_home, verify_entrypoint
 
 
 KEPT_ENVIRON_VARIALBES = ("LANG", "TERM")
@@ -106,33 +105,8 @@ def run_as_agent(
     # so closing the current command context would not release it yet.
     ctx.find_root().close()
 
-    # Sanity check
-
-    result = state.runner.run(
-        [
-            # If the agent user has just been created, we should re-login
-            # to have our groups being updated (so that `agent.su_as_agent_group`
-            # appears).
-            # So we use sg here to instead force execute the command as group
-            # `agent.su_as_agent_group` which works without even with re-login.
-            "sg",
-            "-",
-            agent.su_as_agent_group,
-            "-c",
-            shlex.join(["cat", agent.entrypoint]),
-        ],
-        capture_output=True,
-        text=False,
-        quiet=True,
-    )
-    assert isinstance(result.stdout, bytes)
-    entrypoint_sha256 = compute_sha256_fingerprint(result.stdout)
-    if entrypoint_sha256 != agent.entrypoint_sha256:
-        raise click.ClickException(
-            f"entrypoint {style(agent.entrypoint, fg='yellow')} has been tempered: "
-            f"expected hash {style(agent.entrypoint_sha256, fg='green')}, "
-            f"got {style(entrypoint_sha256, fg='red')}"
-        )
+    # Sanity check on the entrypoint before running anything as the agent
+    verify_entrypoint(state.runner, agent)
 
     mount_args: list[str] = []
     for m in agent.mounts:
