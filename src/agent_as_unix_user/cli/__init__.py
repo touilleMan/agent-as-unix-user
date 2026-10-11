@@ -30,7 +30,7 @@ class AppState:
     "-C",
     type=click.Path(path_type=Path),
     default=default_config_path(),
-    help="Path to the configuration file.",
+    help="Path to the configuration directory.",
 )
 @click.version_option(__version__)
 @click.pass_context

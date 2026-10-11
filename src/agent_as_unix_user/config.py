@@ -13,12 +13,16 @@ from click import style
 
 from .utils import Spinner
 
-DEFAULT_CONFIG_FILENAME = "agent-as-unix-user.toml"
+DEFAULT_CONFIG_DIRNAME = "agent-as-unix-user"
 DEFAULT_GROUP_PREFIX = "su-as-"
+
+CONFIG_FILENAME = "config.toml"
+SECRETS_FILENAME = "secrets.toml"
+
 
 
 def default_config_path() -> Path:
-    return Path.home() / ".config" / DEFAULT_CONFIG_FILENAME
+    return Path.home() / ".config" / DEFAULT_CONFIG_DIRNAME
 
 
 @dataclass(slots=True)
@@ -130,10 +134,13 @@ class Config:
     @classmethod
     @contextmanager
     def open(cls, path: Path) -> Iterator[Config]:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(exist_ok=True)
+        path.mkdir(parents=True, exist_ok=True)
 
-        with path.open("r+", encoding="utf-8") as fh:
+        config_path = path / CONFIG_FILENAME
+        config_path.touch(exist_ok=True)
+
+
+        with config_path.open("r+", encoding="utf-8") as fh:
             spinner = None
             while True:
                 try:
@@ -142,7 +149,7 @@ class Config:
                 except BlockingIOError:
                     if not spinner:
                         spinner = Spinner(
-                            f"Waiting for lock on {style(path, fg='yellow')}"
+                            f"Waiting for lock on {style(config_path, fg='yellow')}"
                         )
                     spinner.tick()
                     time.sleep(0.1)
@@ -178,7 +185,7 @@ class Config:
                 bool(data.get("disable_home_access_check", False)) if raw else False
             )
             config = cls(
-                path=path,
+                path=config_path,
                 agents=agents,
                 disable_home_access_check=disable_home_access_check,
                 _fh=fh,
