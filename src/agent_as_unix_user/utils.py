@@ -1,8 +1,9 @@
 import sys
-from click import style
+from contextlib import contextmanager
 from threading import Thread
 from time import sleep
-from contextlib import contextmanager
+
+from click import style
 
 
 class Spinner:

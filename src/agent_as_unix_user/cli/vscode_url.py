@@ -7,8 +7,8 @@ from urllib.parse import quote
 import click
 from click import echo
 
-from . import AppState, cli
 from ..system import vscode_ssh_remote_authority
+from . import AppState, cli
 
 
 def _port_is_listening(port: int) -> bool:

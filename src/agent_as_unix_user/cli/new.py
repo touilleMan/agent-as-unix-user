@@ -1,25 +1,26 @@
 from __future__ import annotations
 
+import getpass
+import shlex
+import shutil
+from pathlib import Path
+
 import click
 from click import style
-import getpass
-from pathlib import Path
-import shutil
-import shlex
 
 from ..config import AgentConfig
 from ..system import (
-    acl_supported,
     ENTRYPOINT_SRC_MAIN_C,
+    acl_supported,
     agent_config_dir,
-    entrypoint_src_makefile,
-    agent_readme_content,
     agent_entrypoint_src_dir,
-    expected_su_as_agent_group,
-    expected_agent_home,
-    compute_sha256_fingerprint,
-    sshd_config_content,
+    agent_readme_content,
     agent_sshd_dir,
+    compute_sha256_fingerprint,
+    entrypoint_src_makefile,
+    expected_agent_home,
+    expected_su_as_agent_group,
+    sshd_config_content,
 )
 from . import AppState, cli
 from .mount import _apply_source_acl
@@ -250,9 +251,7 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     agent_config.ssh_identity = str(h_ssh_identity)
 
     a_sshd_dir = agent_sshd_dir(a_home)
-    state.runner.run(
-        ["sg", su_as_agent_group, "-c", f"mkdir -p {a_sshd_dir}"]
-    )
+    state.runner.run(["sg", su_as_agent_group, "-c", f"mkdir -p {a_sshd_dir}"])
     a_host_key = a_sshd_dir / "host_ed25519_key"
     state.runner.run(
         [
@@ -278,7 +277,9 @@ def create_agent(state: AppState, agent_config: AgentConfig) -> None:
     state.runner.run(["chmod", "600", str(a_host_key)])
     state.runner.run(["sudo", "chown", a_user_name, str(a_host_key)])
     _sg_copy_file(a_sshd_dir / "sshd_config", sshd_config_content(a_home))
-    _sg_copy_file(a_sshd_dir / "authorized_keys", h_ssh_identity_pub.read_text().strip() + "\n")
+    _sg_copy_file(
+        a_sshd_dir / "authorized_keys", h_ssh_identity_pub.read_text().strip() + "\n"
+    )
 
     # Re-apply the ACLs of the read-write bind mounts: `au delete` clears them,
     # so this is a no-op for a fresh `au new` (which has no mounts yet) and

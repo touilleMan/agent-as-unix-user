@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import os
 import shlex
-import click
 import sys
 from pathlib import Path
-import os
 
-from . import AppState, cli
+import click
+
 from ..system import resolve_agent_home, verify_entrypoint
-
+from . import AppState, cli
 
 KEPT_ENVIRON_VARIALBES = ("LANG", "TERM")
 
@@ -96,7 +96,7 @@ def run_as_agent(
             working_directory = Path(best_match.target) / relative_path
         else:
             # No matching mount found, use agent's home directory
-            working_directory = resolve_agent_home(agent.user_name) or Path.root
+            working_directory = resolve_agent_home(agent.user_name) or Path("/")
 
     # Drop the advisory lock on the configuration file since the subcommand is going
     # to take an arbitrary long time.
@@ -120,18 +120,18 @@ def run_as_agent(
     # Quote the working directory and command for safe shell execution
     command_to_run = " ".join(shlex.quote(c) for c in command)
     if working_directory:
-        command_to_run = f"cd {shlex.quote(str(working_directory))} && { command_to_run }"
+        command_to_run = f"cd {shlex.quote(str(working_directory))} && {command_to_run}"
     full_command = [
-            "bash",
-            # The --login flag makes bash source /etc/profile and ~/.profile (or ~/.bash_profile, ~/.bash_login)
-            "--login",
-            # The -i flag makes bash interactive, which prevents .bashrc from returning early due to
-            # the common "case $- in *i*) ;; *) return;; esac" guard.
-            # Note we only enable interactive if our own shell is itself interactive.
-            "-i" if sys.stdin.isatty() else "",
-            "-c",
-            command_to_run
-        ]
+        "bash",
+        # The --login flag makes bash source /etc/profile and ~/.profile (or ~/.bash_profile, ~/.bash_login)
+        "--login",
+        # The -i flag makes bash interactive, which prevents .bashrc from returning early due to
+        # the common "case $- in *i*) ;; *) return;; esac" guard.
+        # Note we only enable interactive if our own shell is itself interactive.
+        "-i" if sys.stdin.isatty() else "",
+        "-c",
+        command_to_run,
+    ]
 
     result = state.runner.run(
         [

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
 import fcntl
 import json
 import os
 import time
 import tomllib
-from typing import Iterator, TextIO
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TextIO
+
 from click import style
 
 from .utils import Spinner
@@ -18,7 +20,6 @@ DEFAULT_GROUP_PREFIX = "su-as-"
 
 CONFIG_FILENAME = "config.toml"
 SECRETS_FILENAME = "secrets.toml"
-
 
 
 def default_config_path() -> Path:
@@ -111,7 +112,11 @@ class Config:
                     f"su_as_agent_group = {json.dumps(agent.su_as_agent_group)}",
                     f"entrypoint = {json.dumps(agent.entrypoint)}",
                     f"entrypoint_sha256 = {json.dumps(agent.entrypoint_sha256)}",
-                    *((f"ssh_identity = {json.dumps(agent.ssh_identity)}", ) if agent.ssh_identity else ()),
+                    *(
+                        (f"ssh_identity = {json.dumps(agent.ssh_identity)}",)
+                        if agent.ssh_identity
+                        else ()
+                    ),
                     *(
                         f"[[agents.mounts]]\nsource = {json.dumps(m.source)}\ntarget = {json.dumps(m.target)}\nread_only = {json.dumps(m.read_only)}"
                         for m in agent.mounts
@@ -143,7 +148,6 @@ class Config:
         config_path = path / CONFIG_FILENAME
         config_path.touch(exist_ok=True)
 
-
         with config_path.open("r+", encoding="utf-8") as fh:
             spinner = None
             while True:
@@ -171,7 +175,9 @@ class Config:
                         su_as_agent_group=str(item["su_as_agent_group"]),
                         entrypoint=str(item["entrypoint"]),
                         entrypoint_sha256=str(item["entrypoint_sha256"]),
-                        ssh_identity=str(x) if (x := item.get("ssh_identity")) is not None else None,
+                        ssh_identity=str(x)
+                        if (x := item.get("ssh_identity")) is not None
+                        else None,
                         mounts=[
                             MountConfig(
                                 source=str(m["source"]),

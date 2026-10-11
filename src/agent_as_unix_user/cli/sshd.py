@@ -9,15 +9,15 @@ from pathlib import Path
 import click
 from click import echo, style
 
-from . import AppState, cli
 from ..system import (
     add_known_hosts_entry,
+    agent_sshd_dir,
     remove_known_hosts_entries,
     resolve_agent_home,
-    agent_sshd_dir,
     verify_entrypoint,
     vscode_ssh_remote_authority,
 )
+from . import AppState, cli
 
 
 def _free_port() -> int:

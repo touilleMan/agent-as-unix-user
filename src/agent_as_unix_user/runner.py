@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
+
 from click import echo, style
-import subprocess
 
 
 class CommandRunner(Protocol):
@@ -46,7 +48,7 @@ class SubprocessRunner:
             else:
                 display_cmd = " ".join(display_args)
             echo(style("$ ", fg="yellow") + display_cmd)
-        return subprocess.run(  # noqa: S603
+        return subprocess.run(
             list(args),
             cwd=str(cwd) if cwd is not None else None,
             check=check,

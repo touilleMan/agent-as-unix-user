@@ -40,3 +40,28 @@ if mismatches:
     raise SystemExit('Version mismatch: ' + ', '.join(mismatches))
 "
 '''
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+entry = "uv run --only-dev ruff check --fix"
+require_serial = true
+pass_filenames = false
+language = "system"
+types_or = ["python", "pyi"]
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "uv run --only-dev ruff format"
+require_serial = true
+language = "system"
+types_or = ["python", "pyi"]
+
+[[repos.hooks]]
+id = "pyright"
+name = "pyright"
+entry = "uv run --only-dev pyright"
+require_serial = true
+language = "system"
+types_or = ["python", "pyi"]

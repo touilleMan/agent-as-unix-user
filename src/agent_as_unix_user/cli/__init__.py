@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import grp
 import os
 import stat
+from dataclasses import dataclass
+from pathlib import Path
 
-from click import echo, style
 import click
+from click import echo, style
 
-from ..version import __version__
-from ..config import default_config_path, Config
+from ..config import Config, default_config_path
 from ..runner import CommandRunner, SubprocessRunner
+from ..version import __version__
 
 
 @dataclass(slots=True)
@@ -103,14 +103,14 @@ def _check_agent_groups(app_state: AppState) -> None:
 
 
 # Import does a side effect that register the sub command in `cli`
-from . import mount as _mount  # noqa: E402,F401
-from . import delete as _delete  # noqa: E402,F401
-from . import info as _info  # noqa: E402,F401
-from . import list as _list  # noqa: E402,F401
-from . import new as _new  # noqa: E402,F401
-from . import run as _run  # noqa: E402,F401
-from . import sshd as _sshd  # noqa: E402,F401
-from . import vscode_url as _vscode_url  # noqa: E402,F401
+from . import delete as _delete  # noqa: F401
+from . import info as _info  # noqa: F401
+from . import list as _list  # noqa: F401
+from . import mount as _mount  # noqa: F401
+from . import new as _new  # noqa: F401
+from . import run as _run  # noqa: F401
+from . import sshd as _sshd  # noqa: F401
+from . import vscode_url as _vscode_url  # noqa: F401
 
 
 def main() -> None:

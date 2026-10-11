@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from hashlib import sha256
-from dataclasses import dataclass
-from pathlib import Path
 import json
 import os
 import shlex
+from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
+
 import click
 
 from .config import AgentConfig
@@ -160,26 +161,29 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
     if user_ok and not a_user_info.get("home"):
         errors.append("user account has no home directory configured")
 
-    h_identity = Path(agent.ssh_identity)
-    h_identity_pub = Path(f"{agent.ssh_identity}.pub")
-    if not h_identity.exists():
-        errors.append(f"missing ssh identity: {h_identity}")
-    if a_home is not None:
-        a_sshd_dir = agent_sshd_dir(a_home)
-        sshd_config = a_sshd_dir / "sshd_config"
-        if not sshd_config.exists():
-            errors.append(f"missing sshd config: {sshd_config}")
-        authorized_keys = a_sshd_dir / "authorized_keys"
-        if not authorized_keys.exists():
-            errors.append(f"missing ssh authorized keys: {authorized_keys}")
-        elif not h_identity_pub.exists():
-            errors.append(f"missing ssh identity public key: {h_identity_pub}")
-        else:
-            pub = h_identity_pub.read_text().strip()
-            if pub not in authorized_keys.read_text().splitlines():
-                errors.append(
-                    f"ssh authorized keys are missing the ssh identity public key ({h_identity_pub})"
-                )
+    if not agent.ssh_identity:
+        errors.append("config has no `ssh_identity` entry")
+    else:
+        h_identity = Path(agent.ssh_identity)
+        h_identity_pub = Path(f"{agent.ssh_identity}.pub")
+        if not h_identity.exists():
+            errors.append(f"missing ssh identity: {h_identity}")
+        if a_home is not None:
+            a_sshd_dir = agent_sshd_dir(a_home)
+            sshd_config = a_sshd_dir / "sshd_config"
+            if not sshd_config.exists():
+                errors.append(f"missing sshd config: {sshd_config}")
+            authorized_keys = a_sshd_dir / "authorized_keys"
+            if not authorized_keys.exists():
+                errors.append(f"missing ssh authorized keys: {authorized_keys}")
+            elif not h_identity_pub.exists():
+                errors.append(f"missing ssh identity public key: {h_identity_pub}")
+            else:
+                pub = h_identity_pub.read_text().strip()
+                if pub not in authorized_keys.read_text().splitlines():
+                    errors.append(
+                        f"ssh authorized keys are missing the ssh identity public key ({h_identity_pub})"
+                    )
 
     return HealthCheckResult(
         user_name=agent.user_name,
@@ -189,7 +193,7 @@ def healthcheck_agent(runner: CommandRunner, agent: AgentConfig) -> HealthCheckR
 
 
 def compute_sha256_fingerprint(data: bytes) -> str:
-    return sha256(data).digest().hex()
+    return sha256(data).hexdigest()
 
 
 def verify_entrypoint(runner: CommandRunner, agent: AgentConfig) -> None:
@@ -278,12 +282,18 @@ def add_known_hosts_entry(known_hosts: Path, entry: str) -> bool:
     return True
 
 
-def remove_known_hosts_entries(known_hosts: Path, port: int, host: str = "127.0.0.1") -> None:
+def remove_known_hosts_entries(
+    known_hosts: Path, port: int, host: str = "127.0.0.1"
+) -> None:
     """Remove all the entries corresponding to `host`/`port` from `known_hosts`."""
     if not known_hosts.exists():
         return
     prefix = f"[{host}]:{port} "
-    remaining = [line for line in known_hosts.read_text().splitlines() if not line.startswith(prefix)]
+    remaining = [
+        line
+        for line in known_hosts.read_text().splitlines()
+        if not line.startswith(prefix)
+    ]
     known_hosts.write_text("".join(line + "\n" for line in remaining), encoding="utf-8")
 
 

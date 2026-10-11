@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click import echo, style
 import click
+from click import echo, style
 
 from ..system import resolve_agent_home
+from . import AppState, cli
 from .mount import _clear_source_acl
 from .new import create_agent
-from . import AppState, cli
 
 
 @cli.command("delete")
