@@ -7,6 +7,7 @@ import click
 
 from ..system import resolve_agent_home
 from .mount import _clear_source_acl
+from .new import create_agent
 from . import AppState, cli
 
 
@@ -15,9 +16,19 @@ from . import AppState, cli
 @click.option(
     "--delete-home", "-H", is_flag=True, help="Also delete the agent home dir"
 )
+@click.option(
+    "--and-recreate",
+    "and_recreate",
+    is_flag=True,
+    help="Recreate the agent just after having deleted it, reapplying its "
+    "configuration (e.g. its mounts) instead of removing it from the config file. "
+    "This is the way to fix an agent after upgrading `au` to a version with breaking changes.",
+)
 @click.option("--yes", "-y", is_flag=True, help="Do not ask for confirmation.")
 @click.pass_obj
-def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) -> None:
+def delete_agent(
+    state: AppState, user_name: str, delete_home: bool, and_recreate: bool, yes: bool
+) -> None:
     """Delete an agent and remove its associated UNIX user and group."""
     agent = state.config.get_agent(user_name)
     if agent is None:
@@ -86,6 +97,12 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
                 else:
                     agent_home_to_delete = agent_home
 
+    # Remove the dedicated ssh identity (and its public part), if it exists
+    if agent.ssh_identity:
+        identity = Path(agent.ssh_identity)
+        identity.unlink(missing_ok=True)
+        identity.with_name(f"{identity.name}.pub").unlink(missing_ok=True)
+
     # Remove all mount ACLs before deleting the agent
     for mount in list(agent.mounts):
         if not mount.read_only:
@@ -94,7 +111,8 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
                 f"{style(mount.source, fg='yellow')} -> {style(mount.target, fg='yellow')}"
             )
             _clear_source_acl(state, Path(mount.source), agent.su_as_agent_group)
-    agent.mounts.clear()
+    if not and_recreate:
+        agent.mounts.clear()
 
     # Actual deletion
 
@@ -110,7 +128,13 @@ def delete_agent(state: AppState, user_name: str, delete_home: bool, yes: bool) 
     if agent_home_to_delete:
         state.runner.run(["sudo", "rm", "-rf", str(agent_home_to_delete)], check=False)
 
-    state.config.remove_agent(user_name)
-    state.config.save()
+    if and_recreate:
+        # Recreate the agent from its (still present) config entry, so its
+        # configuration (e.g. its mounts) is reapplied to the fresh agent
+        create_agent(state, agent)
+        echo(f"Deleted and recreated agent {style(user_name, fg='green')}")
+    else:
+        state.config.remove_agent(user_name)
+        state.config.save()
 
-    echo(f"Deleted agent {style(user_name, fg='green')}")
+        echo(f"Deleted agent {style(user_name, fg='green')}")

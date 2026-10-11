@@ -20,6 +20,7 @@ from ..system import (
     compute_sha256_fingerprint,
 )
 from . import AppState, cli
+from .mount import _apply_source_acl
 
 
 @cli.command("new")
@@ -32,7 +33,6 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     su_as_agent_group = expected_su_as_agent_group(user_name)
     home = expected_home(user_name, state.home_root)
     entrypoint = config_dir(home) / "su_as_agent"
-    entrypoint_src = entrypoint_src_dir(home)
 
     if state.config.get_agent(user_name) is not None:
         raise click.ClickException(
@@ -61,8 +61,43 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
         bootstrapped=False,
         mounts=[],
     )
+
+    create_agent(state, agent_config)
+
+    click.echo(f"Created agent {style(user_name, fg='green')}")
+
+
+def create_agent(state: AppState, agent_config: AgentConfig) -> None:
+    """
+    This command:
+    - Saves the agent in the config file
+    - Creates the UNIX user/group/home
+    - Copies & compiles the entrypoint
+    - Creates the sshd config
+    - Configure the mount pathes ACLs
+    """
+
+    assert agent_config.bootstrapped is False
     state.config.upsert_agent(agent_config)
     state.config.save()
+
+    user_name = agent_config.user_name
+    su_as_agent_group = agent_config.su_as_agent_group
+    config_path = state.config_path
+    home = expected_home(user_name, state.home_root)
+    entrypoint = config_dir(home) / "su_as_agent"
+    entrypoint_src = entrypoint_src_dir(home)
+
+    # Convoluted way to copy a file into the agent's home: we must use `sg`
+    # (to execute as the su-as-agent group) since our current session may not
+    # have the freshly-created group in it yet.
+    def _sg_copy_file(target: Path, input: str) -> None:
+        state.runner.run(
+            ["sg", su_as_agent_group, "-c", f"tee {target}"],
+            input=input,
+            # tee writes on stdout so silence this
+            capture_output=True,
+        )
 
     # Create the UNIX stuff
 
@@ -124,15 +159,6 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     # So any write operation must be done as a shell command with `sg <UNIX group>`
     # as prefix (which execute command as this group ID).
 
-    # Convoluted wait to copy a file since we must use `sg`
-    def _sg_copy_file(target: Path, input: str) -> None:
-        state.runner.run(
-            ["sg", su_as_agent_group, "-c", f"tee {target}"],
-            input=input,
-            # tee writes on stdout so silence this
-            capture_output=True,
-        )
-
     _sg_copy_file(
         home / "README.md",
         agent_readme_content(
@@ -189,6 +215,21 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
     # Note the leading `4` in chmod, this is the setuid bit
     state.runner.run(["sudo", "chmod", "4750", str(entrypoint)])
 
+    # Re-apply the ACLs of the read-write bind mounts: `au delete` clears them,
+    # so this is a no-op for a fresh `au new` (which has no mounts yet) and
+    # restores the sources' accesses when recreating an agent with
+    # `au delete --and-recreate`.
+    for mount in agent_config.mounts:
+        if mount.read_only:
+            continue
+        source = Path(mount.source)
+        if source.exists():
+            _apply_source_acl(state, source, su_as_agent_group)
+        else:
+            click.echo(
+                f"Skipping rw access restoration on {style(mount.source, fg='yellow')}: source doesn't exist"
+            )
+
     # Finally update again the config to acknowledge the agent is ready
 
     result = state.runner.run(
@@ -214,5 +255,3 @@ def new_agent(state: AppState, user_name: str, yes: bool) -> None:
 
     state.config.upsert_agent(agent_config)
     state.config.save()
-
-    click.echo(f"Created agent {style(user_name, fg='green')}")
